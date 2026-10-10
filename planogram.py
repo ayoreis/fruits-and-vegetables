@@ -1,4 +1,4 @@
-"""Reading data/planogram.json."""
+"""Reading input/planogram.json."""
 
 import json
 

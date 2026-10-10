@@ -10,7 +10,7 @@ plano = None
 
 base_dir = Path(__file__).resolve().parent
 
-with open(base_dir / "data" / "planogram.json") as file:
+with open(base_dir / "input" / "planogram.json") as file:
     d = json.load(file)
     plano = d
 
@@ -20,8 +20,8 @@ camname = "6462"
 
 # print([i["image_coordinates"] for i in plano["Frutas e Legumes"]["cameras"][camname]["products"]])
 
-image_path = base_dir / "data" / "cameras" / camname / f"{name}.jpg"
-output_dir = base_dir / "output"
+image_path = base_dir / "input" / "cameras" / camname / f"{name}.jpg"
+output_dir = base_dir / "output" / "colorthing"
 output_dir.mkdir(parents=True, exist_ok=True)
 
 image = cv2.imread(str(image_path))

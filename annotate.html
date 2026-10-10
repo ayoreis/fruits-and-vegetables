@@ -60,7 +60,7 @@
   #save-status { color: var(--muted); min-width: 90px; text-align: right; }
   #save-status.error { color: var(--bad); }
 
-  main { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
+  main { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
 
   nav { overflow-y: auto; border-right: 1px solid var(--border); padding-bottom: 8px; }
   .filters {
@@ -87,44 +87,59 @@
   nav button[aria-current="true"] .count { color: #111; }
   nav .count.done { color: var(--ok); }
 
-  .viewer { padding: 16px; overflow: auto; min-width: 0; }
-  .viewer p { margin: 0 0 8px; color: var(--muted); }
-  canvas { width: 100%; height: auto; display: block; border-radius: 6px; cursor: pointer; background: #000; }
+  .viewer { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
+  .viewer > p { margin: 0; color: var(--muted); }
+  /* Leave room for the header, title and annotation panel so the panel stays on screen. */
+  canvas {
+    display: block; margin: 0 auto; max-width: 100%; max-height: calc(100vh - 400px); min-height: 200px;
+    width: auto; height: auto; border-radius: 6px; cursor: pointer; background: #000;
+  }
 
-  aside {
-    border-left: 1px solid var(--border); background: var(--panel);
-    padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+  .annotate { display: grid; grid-template-columns: minmax(200px, 340px) 1fr; gap: 16px; }
+  /* One row per step, in the order you work: compliance, then stock (which saves and moves on). */
+  .controls { display: grid; grid-template-columns: 150px minmax(0, 520px); gap: 8px 12px; align-content: start; }
+  .group-label { align-self: center; font-size: 12px; color: var(--muted); }
+  .controls > .wide { grid-column: 1 / -1; }
+  @media (max-width: 900px) {
+    .annotate, .controls { grid-template-columns: 1fr; }
   }
   .crop {
-    height: 260px; display: flex; align-items: center; justify-content: center;
+    height: 210px; display: flex; align-items: center; justify-content: center;
     background: #000; border-radius: 6px; overflow: hidden;
   }
   .crop img { width: 100%; height: 100%; object-fit: contain; }
   .area-id { font-size: 12px; color: var(--muted); }
   .product { font-size: 17px; font-weight: 600; margin: 2px 0 0; }
 
-  fieldset { border: 0; padding: 0; margin: 0; }
-  legend { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .example { border: 1px dashed var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12px; color: var(--muted); }
+  .example p { margin: 4px 0 0; }
+  .example strong { color: var(--text); }
+  .tag {
+    display: inline-block; padding: 1px 6px; border-radius: 3px;
+    background: var(--accent); color: #111; font-size: 11px; font-weight: 600;
+  }
+
   .choices { display: grid; gap: 6px; }
   .choices.two { grid-template-columns: 1fr 1fr; }
   .choices.three { grid-template-columns: 1fr 1fr 1fr; }
   .choices button {
-    padding: 10px 6px; border: 1px solid var(--border); border-radius: 6px;
-    background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+    padding: 9px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit; cursor: pointer; white-space: nowrap;
   }
   .choices button:hover { border-color: var(--muted); }
   .choices button[aria-pressed="true"] { background: var(--text); color: var(--pressed-text); border-color: var(--text); }
   .choices button[data-compliant="false"][aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .links { display: flex; justify-content: center; gap: 24px; margin-top: 6px; }
+  .links button {
+    padding: 2px 0; border: 0; background: none; color: var(--muted);
+    font: inherit; cursor: pointer;
+  }
+  .links button:hover { color: var(--text); text-decoration: underline; }
   kbd {
     font: 11px ui-monospace, monospace; padding: 0 4px; margin-left: 4px;
     border: 1px solid currentColor; border-radius: 3px; opacity: .6;
   }
 
-  .row { display: flex; gap: 6px; }
-  .row button {
-    flex: 1; padding: 6px; border: 1px solid var(--border); border-radius: 6px;
-    background: none; color: var(--text); font: inherit; cursor: pointer;
-  }
   .help { font-size: 12px; color: var(--muted); margin: 0; }
   .help kbd { margin: 0 2px 0 0; }
 </style>
@@ -175,48 +190,60 @@
   <section class="viewer">
     <p id="image-title"></p>
     <canvas id="canvas"></canvas>
+
+    <div class="annotate">
+      <div>
+        <div class="crop"><img id="crop" alt="Stretched view of the selected area"></div>
+        <div class="links" role="group" aria-label="Navigate">
+          <button id="previous">← Previous area</button>
+          <button id="clear" title="Remove this area's annotation">Clear area</button>
+          <button id="next">Next area →</button>
+        </div>
+      </div>
+
+      <div class="controls">
+        <div class="wide">
+          <div class="area-id" id="area-id"></div>
+          <p class="product" id="product-name"></p>
+        </div>
+
+        <div class="example wide" id="example" hidden></div>
+
+        <span class="group-label" id="compliance-label">Planogram compliance</span>
+        <div class="choices two" role="group" aria-labelledby="compliance-label">
+          <button data-compliant="true">Compliant<kbd>C</kbd></button>
+          <button data-compliant="false">Wrong product<kbd>W</kbd></button>
+        </div>
+
+        <span class="group-label" id="stock-label">Stock level — saves and moves on</span>
+        <div class="choices three" role="group" aria-labelledby="stock-label">
+          <button data-stock="empty">Empty<kbd>1</kbd></button>
+          <button data-stock="half">Half<kbd>2</kbd></button>
+          <button data-stock="full">Full<kbd>3</kbd></button>
+        </div>
+
+        <p class="help wide">
+          <kbd>←</kbd><kbd>→</kbd> area · <kbd>↑</kbd><kbd>↓</kbd> image · <kbd>Del</kbd> clear ·
+          click an area on the photo to select it. Compliance defaults to compliant.
+        </p>
+      </div>
+    </div>
   </section>
-
-  <aside>
-    <div class="crop"><img id="crop" alt="Stretched view of the selected area"></div>
-    <div>
-      <div class="area-id" id="area-id"></div>
-      <p class="product" id="product-name"></p>
-    </div>
-
-    <fieldset>
-      <legend>Planogram compliance</legend>
-      <div class="choices two">
-        <button data-compliant="true">Compliant<kbd>C</kbd></button>
-        <button data-compliant="false">Wrong product<kbd>W</kbd></button>
-      </div>
-    </fieldset>
-
-    <fieldset>
-      <legend>Stock level — choosing one saves and moves to the next area</legend>
-      <div class="choices three">
-        <button data-stock="empty">Empty<kbd>1</kbd></button>
-        <button data-stock="half">Half<kbd>2</kbd></button>
-        <button data-stock="full">Full<kbd>3</kbd></button>
-      </div>
-    </fieldset>
-
-    <div class="row">
-      <button id="previous">← Previous</button>
-      <button id="clear">Clear</button>
-      <button id="next">Next →</button>
-    </div>
-
-    <p class="help">
-      <kbd>←</kbd><kbd>→</kbd> area · <kbd>↑</kbd><kbd>↓</kbd> image · <kbd>Del</kbd> clear ·
-      click an area on the photo to select it. Compliance defaults to compliant.
-    </p>
-  </aside>
 </main>
 
 <script>
 const STOCK_VALUES = { empty: 0, half: 0.5, full: 1 };
 const STOCK_KEYS = { 1: "empty", 2: "half", 3: "full" };
+
+// Reference annotations from the challenge document. Their photos are not in the dataset,
+// so they are shown on every photo of the same area and never saved.
+const DOCUMENT_EXAMPLES = {
+  "6215": {
+    "1751052241.jpg": {
+      "6215_2": { planogram_compliant: true, stock_level: "half", stock_value: 0.5 },
+    },
+  },
+};
 
 let planogram, annotations;
 let queue = [];
@@ -448,6 +475,18 @@ function renderPhoto() {
   canvas.height = photo.naturalHeight;
   context.drawImage(photo, 0, 0);
 
+  // Fade everything outside the areas: darken the whole photo, then redraw it inside each area.
+  context.fillStyle = "rgba(0, 0, 0, 0.6)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  for (const a of areas()) {
+    context.save();
+    context.beginPath();
+    a.quad.forEach(([x, y], i) => (i ? context.lineTo(x, y) : context.moveTo(x, y)));
+    context.clip();
+    context.drawImage(photo, 0, 0);
+    context.restore();
+  }
+
   const styles = getComputedStyle(document.documentElement);
   const color = (name) => styles.getPropertyValue(name).trim();
 
@@ -493,6 +532,17 @@ function renderPanel() {
   $("crop").src = `/crop/${camera}/${file.replace(".jpg", "")}/${a.area_id}.jpg`;
   $("area-id").textContent = `Area ${a.area_id} · product ${a.product_id} · ${areaIndex + 1} of ${areas().length}`;
   $("product-name").textContent = a.product_name;
+
+  const examples = Object.entries(DOCUMENT_EXAMPLES[camera] ?? {})
+    .filter(([, areas]) => areas[a.area_id])
+    .map(([exampleFile, areas]) => {
+      const { planogram_compliant, stock_level, stock_value } = areas[a.area_id];
+      return `<p>Photo ${exampleFile} (${formatTime(exampleFile)}, not in the dataset):
+        <strong>${planogram_compliant ? "compliant" : "wrong product"}</strong>,
+        stock <strong>${stock_level}</strong> (${stock_value})</p>`;
+    });
+  $("example").hidden = !examples.length;
+  $("example").innerHTML = `<span class="tag">Challenge document example</span>${examples.join("")}`;
 
   for (const button of document.querySelectorAll("[data-compliant]")) {
     button.setAttribute("aria-pressed", String(currentCompliant()) === button.dataset.compliant);

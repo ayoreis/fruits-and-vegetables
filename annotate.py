@@ -107,9 +107,9 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--planogram", type=Path, default=Path("data/planogram.json"))
-    parser.add_argument("--cameras", type=Path, default=Path("data/cameras"))
-    parser.add_argument("--output", type=Path, default=Path("data/annotations.json"))
+    parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
+    parser.add_argument("--cameras", type=Path, default=Path("input/cameras"))
+    parser.add_argument("--output", type=Path, default=Path("input/annotations.json"))
     parser.add_argument("--port", type=int, default=8000)
     options = parser.parse_args()
 
