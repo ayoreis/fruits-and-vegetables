@@ -1,0 +1,588 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shelf Annotator</title>
+<style>
+  :root {
+    --bg: #f6f6f3;
+    --panel: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #e2e2dc;
+    --accent: #e8a400;
+    --ok: #2e8b57;
+    --bad: #c8412b;
+    --idle: #ffffff;
+    --pressed-text: #ffffff;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615;
+      --panel: #1f1f1d;
+      --text: #ecece8;
+      --muted: #9a9a93;
+      --border: #33332f;
+      --accent: #f2b31b;
+      --ok: #4caf7a;
+      --bad: #e0634d;
+      --idle: #d8d8d2;
+      --pressed-text: #111110;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    height: 100vh;
+    display: grid;
+    grid-template-rows: auto 1fr;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; }
+  .progress { flex: 1; display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .bar { flex: 1; max-width: 320px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+  .bar div { height: 100%; background: var(--ok); width: 0; transition: width .2s; }
+  #save-status { color: var(--muted); min-width: 90px; text-align: right; }
+  #save-status.error { color: var(--bad); }
+
+  main { display: grid; grid-template-columns: 220px 1fr 340px; min-height: 0; }
+
+  nav { overflow-y: auto; border-right: 1px solid var(--border); padding-bottom: 8px; }
+  .filters {
+    position: sticky; top: 0; z-index: 1; display: grid; gap: 6px;
+    padding: 12px; background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .filters label { display: grid; grid-template-columns: 76px 1fr; align-items: center; font-size: 12px; color: var(--muted); }
+  .filters select {
+    min-width: 0; padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel); color: var(--text); font: inherit; font-size: 12px;
+  }
+  .filters .matching { font-size: 12px; color: var(--muted); margin: 2px 0 0; }
+  .filters .matching button { all: unset; color: var(--accent); cursor: pointer; margin-left: 4px; }
+  .empty { margin: 12px; color: var(--muted); font-size: 12px; }
+  nav h2 { font-size: 12px; color: var(--muted); margin: 12px 12px 4px; font-weight: 600; }
+  nav button {
+    display: flex; justify-content: space-between; width: 100%;
+    padding: 4px 12px; border: 0; background: none; color: var(--text);
+    font: inherit; cursor: pointer; text-align: left;
+  }
+  nav button:hover { background: var(--border); }
+  nav button[aria-current="true"] { background: var(--accent); color: #111; }
+  nav .count { color: var(--muted); font-variant-numeric: tabular-nums; }
+  nav button[aria-current="true"] .count { color: #111; }
+  nav .count.done { color: var(--ok); }
+
+  .viewer { padding: 16px; overflow: auto; min-width: 0; }
+  .viewer p { margin: 0 0 8px; color: var(--muted); }
+  canvas { width: 100%; height: auto; display: block; border-radius: 6px; cursor: pointer; background: #000; }
+
+  aside {
+    border-left: 1px solid var(--border); background: var(--panel);
+    padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+  }
+  .crop {
+    height: 260px; display: flex; align-items: center; justify-content: center;
+    background: #000; border-radius: 6px; overflow: hidden;
+  }
+  .crop img { width: 100%; height: 100%; object-fit: contain; }
+  .area-id { font-size: 12px; color: var(--muted); }
+  .product { font-size: 17px; font-weight: 600; margin: 2px 0 0; }
+
+  fieldset { border: 0; padding: 0; margin: 0; }
+  legend { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .choices { display: grid; gap: 6px; }
+  .choices.two { grid-template-columns: 1fr 1fr; }
+  .choices.three { grid-template-columns: 1fr 1fr 1fr; }
+  .choices button {
+    padding: 10px 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+  }
+  .choices button:hover { border-color: var(--muted); }
+  .choices button[aria-pressed="true"] { background: var(--text); color: var(--pressed-text); border-color: var(--text); }
+  .choices button[data-compliant="false"][aria-pressed="true"] { background: var(--bad); border-color: var(--bad); color: #fff; }
+  kbd {
+    font: 11px ui-monospace, monospace; padding: 0 4px; margin-left: 4px;
+    border: 1px solid currentColor; border-radius: 3px; opacity: .6;
+  }
+
+  .row { display: flex; gap: 6px; }
+  .row button {
+    flex: 1; padding: 6px; border: 1px solid var(--border); border-radius: 6px;
+    background: none; color: var(--text); font: inherit; cursor: pointer;
+  }
+  .help { font-size: 12px; color: var(--muted); margin: 0; }
+  .help kbd { margin: 0 2px 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Shelf Annotator</h1>
+  <div class="progress">
+    <div class="bar"><div id="bar"></div></div>
+    <span id="progress-text"></span>
+  </div>
+  <span id="save-status"></span>
+</header>
+
+<main>
+  <nav>
+    <div class="filters">
+      <label>Status
+        <select id="filter-status">
+          <option value="">All areas</option>
+          <option value="todo">Yet to be annotated</option>
+          <option value="done">Annotated</option>
+        </select>
+      </label>
+      <label>Stock
+        <select id="filter-stock">
+          <option value="">Any</option>
+          <option value="empty">Empty</option>
+          <option value="half">Half</option>
+          <option value="full">Full</option>
+        </select>
+      </label>
+      <label>Compliance
+        <select id="filter-compliance">
+          <option value="">Any</option>
+          <option value="true">Compliant</option>
+          <option value="false">Wrong product</option>
+        </select>
+      </label>
+      <label>Camera
+        <select id="filter-camera"><option value="">All</option></select>
+      </label>
+      <p class="matching"><span id="matching"></span><button id="reset-filters" hidden>Reset</button></p>
+    </div>
+    <div id="images"></div>
+  </nav>
+
+  <section class="viewer">
+    <p id="image-title"></p>
+    <canvas id="canvas"></canvas>
+  </section>
+
+  <aside>
+    <div class="crop"><img id="crop" alt="Stretched view of the selected area"></div>
+    <div>
+      <div class="area-id" id="area-id"></div>
+      <p class="product" id="product-name"></p>
+    </div>
+
+    <fieldset>
+      <legend>Planogram compliance</legend>
+      <div class="choices two">
+        <button data-compliant="true">Compliant<kbd>C</kbd></button>
+        <button data-compliant="false">Wrong product<kbd>W</kbd></button>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Stock level — choosing one saves and moves to the next area</legend>
+      <div class="choices three">
+        <button data-stock="empty">Empty<kbd>1</kbd></button>
+        <button data-stock="half">Half<kbd>2</kbd></button>
+        <button data-stock="full">Full<kbd>3</kbd></button>
+      </div>
+    </fieldset>
+
+    <div class="row">
+      <button id="previous">← Previous</button>
+      <button id="clear">Clear</button>
+      <button id="next">Next →</button>
+    </div>
+
+    <p class="help">
+      <kbd>←</kbd><kbd>→</kbd> area · <kbd>↑</kbd><kbd>↓</kbd> image · <kbd>Del</kbd> clear ·
+      click an area on the photo to select it. Compliance defaults to compliant.
+    </p>
+  </aside>
+</main>
+
+<script>
+const STOCK_VALUES = { empty: 0, half: 0.5, full: 1 };
+const STOCK_KEYS = { 1: "empty", 2: "half", 3: "full" };
+
+let planogram, annotations;
+let queue = [];
+let imageIndex = 0;
+let areaIndex = 0;
+// Compliance chosen for the current area before its stock level is set.
+let pendingCompliant = true;
+let photo = new Image();
+const FILTERS = ["status", "stock", "compliance", "camera"];
+let filters = { status: "", stock: "", compliance: "", camera: "" };
+
+const $ = (id) => document.getElementById(id);
+const canvas = $("canvas");
+const context = canvas.getContext("2d");
+
+const current = () => queue[imageIndex];
+const areas = () => planogram[current().camera];
+const area = () => areas()[areaIndex];
+const entry = (camera, file, areaId) => annotations[camera]?.[file]?.[areaId];
+const currentEntry = () => entry(current().camera, current().file, area().area_id);
+const currentCompliant = () => currentEntry()?.planogram_compliant ?? pendingCompliant;
+const doneCount = ({ camera, file }) =>
+  planogram[camera].filter((a) => entry(camera, file, a.area_id)).length;
+
+// Whether area `j` of image `i` passes the filters. Stock and compliance filters only match annotated areas.
+function matches(i, j) {
+  const { camera, file } = queue[i];
+  if (filters.camera && camera !== filters.camera) return false;
+  const value = entry(camera, file, planogram[camera][j].area_id);
+  if (filters.status === "todo" && value) return false;
+  if (filters.status === "done" && !value) return false;
+  if (filters.stock && value?.stock_level !== filters.stock) return false;
+  if (filters.compliance && String(value?.planogram_compliant) !== filters.compliance) return false;
+  return true;
+}
+
+const matchingAreas = (i) => planogram[queue[i].camera].map((_, j) => j).filter((j) => matches(i, j));
+
+// Every [image, area] position in order, used to step through matching areas only.
+const positions = () => queue.flatMap((item, i) => planogram[item.camera].map((_, j) => [i, j]));
+const isBefore = ([i, j], [k, l]) => i < k || (i === k && j < l);
+
+function formatTime(file) {
+  const date = new Date(parseInt(file) * 1000);
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Lisbon" });
+}
+
+// ---------- Editing ----------
+
+function setEntry(value) {
+  const { camera, file } = current();
+  const id = area().area_id;
+  annotations[camera] ??= {};
+  annotations[camera][file] ??= {};
+  if (value) {
+    annotations[camera][file][id] = value;
+  } else {
+    delete annotations[camera][file][id];
+    if (!Object.keys(annotations[camera][file]).length) delete annotations[camera][file];
+    if (!Object.keys(annotations[camera]).length) delete annotations[camera];
+  }
+  save();
+}
+
+function setCompliance(compliant) {
+  const existing = currentEntry();
+  if (existing) setEntry({ ...existing, planogram_compliant: compliant });
+  else pendingCompliant = compliant;
+  render();
+}
+
+function setStock(level) {
+  setEntry({ planogram_compliant: currentCompliant(), stock_level: level, stock_value: STOCK_VALUES[level] });
+  nextArea();
+}
+
+function clearArea() {
+  setEntry(null);
+  pendingCompliant = true;
+  render();
+}
+
+// ---------- Navigation ----------
+
+function selectImage(index, area = 0) {
+  const changed = index !== imageIndex || !photo.src;
+  imageIndex = Math.max(0, Math.min(queue.length - 1, index));
+  areaIndex = area;
+  pendingCompliant = true;
+  if (changed) {
+    const { camera, file } = current();
+    photo = new Image();
+    photo.onload = render;
+    photo.src = `/image/${camera}/${file}`;
+  }
+  render();
+}
+
+function selectArea(index) {
+  areaIndex = index;
+  pendingCompliant = true;
+  render();
+}
+
+function nextArea() {
+  const next = positions().find((p) => isBefore([imageIndex, areaIndex], p) && matches(...p));
+  if (next) selectImage(...next);
+  else render();
+}
+
+function previousArea() {
+  const previous = positions().findLast((p) => isBefore(p, [imageIndex, areaIndex]) && matches(...p));
+  if (previous) selectImage(...previous);
+}
+
+function stepImage(direction) {
+  for (let i = imageIndex + direction; i >= 0 && i < queue.length; i += direction) {
+    const areas = matchingAreas(i);
+    if (areas.length) return selectImage(i, areas[0]);
+  }
+}
+
+// After the filters change, stay put if the current area still matches, else go to the next match.
+function applyFilters() {
+  if (!matches(imageIndex, areaIndex)) {
+    const all = positions().filter((p) => matches(...p));
+    const target = all.find((p) => isBefore([imageIndex, areaIndex], p)) ?? all[0];
+    if (target) return selectImage(...target);
+  }
+  render();
+}
+
+// ---------- Saving ----------
+
+// Write cameras, images and areas in a stable order so the file diffs cleanly.
+function ordered() {
+  const output = {};
+  for (const camera of Object.keys(annotations).sort()) {
+    const order = (planogram[camera] ?? []).map((a) => a.area_id);
+    const rank = (id) => (order.includes(id) ? order.indexOf(id) : Infinity);
+    output[camera] = {};
+    for (const file of Object.keys(annotations[camera]).sort()) {
+      const ids = Object.keys(annotations[camera][file]).sort((a, b) => rank(a) - rank(b));
+      output[camera][file] = Object.fromEntries(ids.map((id) => [id, annotations[camera][file][id]]));
+    }
+  }
+  return output;
+}
+
+let saveTimer;
+function save() {
+  const status = $("save-status");
+  status.textContent = "Saving…";
+  status.className = "";
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async () => {
+    try {
+      const response = await fetch("/api/annotations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(ordered()),
+      });
+      if (!response.ok) throw new Error(response.statusText);
+      status.textContent = "Saved";
+    } catch (error) {
+      status.textContent = "Save failed";
+      status.className = "error";
+    }
+  }, 300);
+}
+
+// ---------- Rendering ----------
+
+function render() {
+  renderSidebar();
+  renderPhoto();
+  renderPanel();
+
+  const total = queue.reduce((sum, item) => sum + planogram[item.camera].length, 0);
+  const done = queue.reduce((sum, item) => sum + doneCount(item), 0);
+  $("bar").style.width = `${(done / total) * 100}%`;
+  $("progress-text").textContent = `${done} / ${total} areas`;
+}
+
+function renderSidebar() {
+  const nav = $("images");
+  nav.replaceChildren();
+  let lastCamera;
+  let shown = 0;
+  let matching = 0;
+  queue.forEach((item, index) => {
+    const count = matchingAreas(index).length;
+    matching += count;
+    if (!count && index !== imageIndex) return;
+    shown++;
+    if (item.camera !== lastCamera) {
+      const heading = document.createElement("h2");
+      heading.textContent = `Camera ${item.camera}`;
+      nav.append(heading);
+      lastCamera = item.camera;
+    }
+    const done = doneCount(item);
+    const total = planogram[item.camera].length;
+    const button = document.createElement("button");
+    button.innerHTML = `<span>${formatTime(item.file)}</span><span class="count${done === total ? " done" : ""}">${done}/${total}</span>`;
+    button.title = item.file;
+    button.setAttribute("aria-current", index === imageIndex);
+    button.onclick = () => selectImage(index);
+    nav.append(button);
+  });
+  if (!matching) {
+    const empty = document.createElement("p");
+    empty.className = "empty";
+    empty.textContent = "No areas match these filters.";
+    nav.prepend(empty);
+  }
+  const active = FILTERS.some((name) => filters[name]);
+  $("matching").textContent = `${matching} matching area${matching === 1 ? "" : "s"} in ${shown} photo${shown === 1 ? "" : "s"}`;
+  $("reset-filters").hidden = !active;
+  nav.querySelector('[aria-current="true"]')?.scrollIntoView({ block: "nearest" });
+}
+
+function renderPhoto() {
+  const { camera, file } = current();
+  $("image-title").textContent = `Camera ${camera} · ${file} · ${formatTime(file)}`;
+  if (!photo.complete || !photo.naturalWidth) return;
+
+  canvas.width = photo.naturalWidth;
+  canvas.height = photo.naturalHeight;
+  context.drawImage(photo, 0, 0);
+
+  const styles = getComputedStyle(document.documentElement);
+  const color = (name) => styles.getPropertyValue(name).trim();
+
+  areas().forEach((a, index) => {
+    const value = entry(camera, file, a.area_id);
+    const selected = index === areaIndex;
+    context.globalAlpha = selected || matches(imageIndex, index) ? 1 : 0.3;
+    const stroke = selected ? color("--accent")
+      : value ? (value.planogram_compliant ? color("--ok") : color("--bad"))
+      : color("--idle");
+
+    context.beginPath();
+    a.quad.forEach(([x, y], i) => (i ? context.lineTo(x, y) : context.moveTo(x, y)));
+    context.closePath();
+    if (value && !selected) {
+      context.fillStyle = stroke + "33";
+      context.fill();
+    }
+    context.lineWidth = selected ? 5 : 2;
+    context.strokeStyle = stroke;
+    context.stroke();
+
+    const label = a.area_id.split("_")[1] + (value ? ` · ${value.stock_level}` : "");
+    const x = a.quad.reduce((sum, p) => sum + p[0], 0) / 4;
+    const y = a.quad.reduce((sum, p) => sum + p[1], 0) / 4;
+    context.font = "bold 14px system-ui, sans-serif";
+    const width = context.measureText(label).width + 10;
+    context.fillStyle = selected ? stroke : "rgba(0, 0, 0, 0.75)";
+    context.fillRect(x - width / 2, y - 10, width, 20);
+    context.fillStyle = selected ? "#111" : "#fff";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(label, x, y);
+  });
+  context.globalAlpha = 1;
+}
+
+function renderPanel() {
+  const { camera, file } = current();
+  const a = area();
+  const value = currentEntry();
+
+  $("crop").src = `/crop/${camera}/${file.replace(".jpg", "")}/${a.area_id}.jpg`;
+  $("area-id").textContent = `Area ${a.area_id} · product ${a.product_id} · ${areaIndex + 1} of ${areas().length}`;
+  $("product-name").textContent = a.product_name;
+
+  for (const button of document.querySelectorAll("[data-compliant]")) {
+    button.setAttribute("aria-pressed", String(currentCompliant()) === button.dataset.compliant);
+  }
+  for (const button of document.querySelectorAll("[data-stock]")) {
+    button.setAttribute("aria-pressed", value?.stock_level === button.dataset.stock);
+  }
+}
+
+// ---------- Input ----------
+
+function pointInQuad([px, py], quad) {
+  let inside = false;
+  for (let i = 0, j = quad.length - 1; i < quad.length; j = i++) {
+    const [xi, yi] = quad[i];
+    const [xj, yj] = quad[j];
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+canvas.addEventListener("click", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  const point = [
+    ((event.clientX - rect.left) / rect.width) * canvas.width,
+    ((event.clientY - rect.top) / rect.height) * canvas.height,
+  ];
+  const index = areas().findIndex((a) => pointInQuad(point, a.quad));
+  if (index >= 0) selectArea(index);
+});
+
+document.querySelectorAll("[data-compliant]").forEach((button) =>
+  button.addEventListener("click", () => setCompliance(button.dataset.compliant === "true")));
+document.querySelectorAll("[data-stock]").forEach((button) =>
+  button.addEventListener("click", () => setStock(button.dataset.stock)));
+for (const name of FILTERS) {
+  $(`filter-${name}`).addEventListener("change", (event) => {
+    filters[name] = event.target.value;
+    try { localStorage.setItem("filters", JSON.stringify(filters)); } catch {}
+    event.target.blur();
+    applyFilters();
+  });
+}
+$("reset-filters").onclick = () => {
+  for (const name of FILTERS) $(`filter-${name}`).value = filters[name] = "";
+  try { localStorage.removeItem("filters"); } catch {}
+  applyFilters();
+};
+$("previous").onclick = previousArea;
+$("next").onclick = nextArea;
+$("clear").onclick = clearArea;
+
+document.addEventListener("keydown", (event) => {
+  if (event.ctrlKey || event.metaKey || event.altKey || event.target.tagName === "SELECT") return;
+  const key = event.key.toLowerCase();
+  if (STOCK_KEYS[key]) setStock(STOCK_KEYS[key]);
+  else if (key === "c") setCompliance(true);
+  else if (key === "w") setCompliance(false);
+  else if (key === "arrowright") nextArea();
+  else if (key === "arrowleft") previousArea();
+  else if (key === "arrowdown") stepImage(1);
+  else if (key === "arrowup") stepImage(-1);
+  else if (key === "delete" || key === "backspace") clearArea();
+  else return;
+  event.preventDefault();
+});
+
+// ---------- Start ----------
+
+(async () => {
+  const state = await (await fetch("/api/state")).json();
+  planogram = state.planogram;
+  annotations = state.annotations;
+  queue = Object.entries(state.images).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
+
+  for (const camera of Object.keys(state.images)) $("filter-camera").add(new Option(camera, camera));
+  try { Object.assign(filters, JSON.parse(localStorage.getItem("filters")) ?? {}); } catch {}
+  for (const name of FILTERS) {
+    // Read the value back so a stale saved option (e.g. a removed camera) falls back to "".
+    $(`filter-${name}`).value = filters[name];
+    filters[name] = $(`filter-${name}`).value;
+  }
+
+  // Resume at the first image that still has unannotated areas.
+  const resume = queue.findIndex((item) => doneCount(item) < planogram[item.camera].length);
+  const index = Math.max(0, resume);
+  const firstOpen = planogram[queue[index].camera].findIndex((a) => !entry(queue[index].camera, queue[index].file, a.area_id));
+  selectImage(index, Math.max(0, firstOpen));
+  applyFilters();
+})();
+</script>
+</body>
+</html>
