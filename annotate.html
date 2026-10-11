@@ -35,6 +35,7 @@
   }
 
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     margin: 0;
     height: 100vh;
@@ -58,6 +59,12 @@
   .bar { flex: 1; max-width: 320px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
   .bar div { height: 100%; background: var(--ok); width: 0; transition: width .2s; }
   #save-status { color: var(--muted); min-width: 90px; text-align: right; }
+  .views { display: flex; gap: 2px; padding: 2px; border-radius: 6px; background: var(--bg); }
+  .views a { padding: 3px 10px; border-radius: 4px; color: var(--muted); text-decoration: none; }
+  .views a:hover { color: var(--text); }
+  .views a[aria-current="page"] { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
+  .summary { flex: 1; color: var(--muted); }
+  .summary strong { color: var(--text); }
   #save-status.error { color: var(--bad); }
 
   main { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
@@ -111,6 +118,14 @@
   .area-id { font-size: 12px; color: var(--muted); }
   .product { font-size: 17px; font-weight: 600; margin: 2px 0 0; }
 
+  .comparison { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 13px; }
+  .comparison dt { color: var(--muted); }
+  .comparison dd { margin: 0; }
+  .comparison .diff { color: var(--bad); font-weight: 600; }
+  .comparison .none { color: var(--muted); font-style: italic; }
+  .comparison .gain { color: var(--ok); font-weight: 600; }
+  .comparison .loss { color: var(--bad); font-weight: 600; }
+
   .example { border: 1px dashed var(--border); border-radius: 6px; padding: 8px 10px; font-size: 12px; color: var(--muted); }
   .example p { margin: 4px 0 0; }
   .example strong { color: var(--text); }
@@ -150,7 +165,12 @@
 <body>
 <header>
   <h1>Shelf Annotator</h1>
-  <div class="progress">
+  <div class="views" aria-label="View">
+    <a href="/annotate" data-view="annotate">Annotate</a>
+    <a href="/compare" data-view="compare">Compare</a>
+  </div>
+  <p class="summary" id="summary" hidden></p>
+  <div class="progress" id="progress">
     <div class="bar"><div id="bar"></div></div>
     <span id="progress-text"></span>
   </div>
@@ -185,6 +205,21 @@
       <label>Camera
         <select id="filter-camera"><option value="">All</option></select>
       </label>
+      <label id="agreement-filter" hidden>Prediction
+        <select id="filter-agreement">
+          <option value="">Any</option>
+          <option value="disagree">Disagrees</option>
+          <option value="stock">Stock differs</option>
+          <option value="compliance">Compliance differs</option>
+          <option value="agree">Agrees</option>
+        </select>
+      </label>
+      <label id="sort-control" hidden>Sort
+        <select id="filter-sort">
+          <option value="">Camera and time</option>
+          <option value="wrong">Most wrong predictions</option>
+        </select>
+      </label>
       <p class="matching"><span id="matching"></span><button id="reset-filters" hidden>Reset</button></p>
     </div>
     <div id="images"></div>
@@ -213,6 +248,8 @@
           <div class="area-id" id="area-id"></div>
           <p class="product" id="product-name"></p>
         </div>
+
+        <dl class="comparison wide" id="comparison" hidden></dl>
 
         <div class="example wide" id="example" hidden></div>
 
@@ -253,14 +290,21 @@ const DOCUMENT_EXAMPLES = {
 };
 
 let planogram, annotations;
+let predictions = {};
+let predictionsFile = "";
+// "annotate" or "compare"; kept in the URL along with the photo, area and filters.
+let view = "annotate";
 let queue = [];
 let imageIndex = 0;
 let areaIndex = 0;
 // Compliance chosen for the current area before its stock level is set.
 let pendingCompliant = true;
 let photo = new Image();
-const FILTERS = ["status", "stock", "compliance", "camera"];
-let filters = { status: "", stock: "", compliance: "", camera: "" };
+const FILTERS = ["status", "stock", "compliance", "camera", "agreement", "sort"];
+let filters = { status: "", stock: "", compliance: "", camera: "", agreement: "", sort: "" };
+// Photo indices in display order, and each photo's place in it; navigation follows the same order.
+let order = [];
+let rank = [];
 
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
@@ -274,24 +318,88 @@ const currentEntry = () => entry(current().camera, current().file, area().area_i
 const currentCompliant = () => currentEntry()?.planogram_compliant ?? pendingCompliant;
 const doneCount = ({ camera, file }) =>
   planogram[camera].filter((a) => entry(camera, file, a.area_id)).length;
+const prediction = (camera, file, areaId) => predictions[camera]?.[file]?.[areaId];
 
-// Whether area `j` of image `i` passes the filters. Stock and compliance filters only match annotated areas.
+// Points a prediction earns against a label, with the challenge's rules; a missing prediction scores worst.
+function areaPoints(label, predicted) {
+  if (!predicted) return { compliance: -2, stock: -3 };
+  const compliance = predicted.planogram_compliant === label.planogram_compliant ? 1 : -2;
+  const stock = predicted.stock_value === label.stock_value ? 1 : predicted.stock_value < label.stock_value ? -2 : -3;
+  return { compliance, stock };
+}
+
+// Which parts of the prediction match the label, or null when the area lacks either.
+function agreement(camera, file, areaId) {
+  const label = entry(camera, file, areaId);
+  const predicted = prediction(camera, file, areaId);
+  if (!label || !predicted) return null;
+  return {
+    stock: predicted.stock_level === label.stock_level,
+    compliance: predicted.planogram_compliant === label.planogram_compliant,
+  };
+}
+
+const agreeCount = ({ camera, file }) =>
+  planogram[camera].filter((a) => {
+    const result = agreement(camera, file, a.area_id);
+    return result?.stock && result?.compliance;
+  }).length;
+
+// Whether area `j` of image `i` passes the filters. Stock and compliance filters only match annotated areas;
+// the prediction filter only applies in the compare view.
 function matches(i, j) {
   const { camera, file } = queue[i];
   if (filters.camera && camera !== filters.camera) return false;
-  const value = entry(camera, file, planogram[camera][j].area_id);
+  const id = planogram[camera][j].area_id;
+  const value = entry(camera, file, id);
   if (filters.status === "todo" && value) return false;
   if (filters.status === "done" && !value) return false;
   if (filters.stock && value?.stock_level !== filters.stock) return false;
   if (filters.compliance && String(value?.planogram_compliant) !== filters.compliance) return false;
+  if (view === "compare" && filters.agreement) {
+    const result = agreement(camera, file, id);
+    if (!result) return false;
+    const agrees = result.stock && result.compliance;
+    if (filters.agreement === "agree" && !agrees) return false;
+    if (filters.agreement === "disagree" && agrees) return false;
+    if (filters.agreement === "stock" && result.stock) return false;
+    if (filters.agreement === "compliance" && result.compliance) return false;
+  }
   return true;
 }
 
 const matchingAreas = (i) => planogram[queue[i].camera].map((_, j) => j).filter((j) => matches(i, j));
 
-// Every [image, area] position in order, used to step through matching areas only.
-const positions = () => queue.flatMap((item, i) => planogram[item.camera].map((_, j) => [i, j]));
-const isBefore = ([i, j], [k, l]) => i < k || (i === k && j < l);
+// How many annotated areas of a photo the prediction gets wrong, and the points those cost.
+function mistakes({ camera, file }) {
+  let wrong = 0, lost = 0;
+  for (const a of planogram[camera]) {
+    const label = entry(camera, file, a.area_id);
+    if (!label) continue;
+    const result = areaPoints(label, prediction(camera, file, a.area_id));
+    if (result.compliance + result.stock < 2) wrong++;
+    lost += 2 - result.compliance - result.stock;
+  }
+  return { wrong, lost };
+}
+
+// Camera and time order, or in the compare view optionally the photos with the most wrong predictions first.
+function updateOrder() {
+  order = queue.map((_, i) => i);
+  if (view === "compare" && filters.sort === "wrong") {
+    const counts = queue.map(mistakes);
+    order.sort((a, b) => counts[b].wrong - counts[a].wrong || counts[b].lost - counts[a].lost || a - b);
+  }
+  rank = [];
+  order.forEach((i, place) => (rank[i] = place));
+}
+
+// Every [image, area] position in display order, used to step through matching areas only.
+function positions() {
+  updateOrder();
+  return order.flatMap((i) => planogram[queue[i].camera].map((_, j) => [i, j]));
+}
+const isBefore = ([i, j], [k, l]) => rank[i] < rank[k] || (i === k && j < l);
 
 function formatTime(file) {
   const date = new Date(parseInt(file) * 1000);
@@ -409,9 +517,10 @@ function previousArea() {
 }
 
 function stepImage(direction) {
-  for (let i = imageIndex + direction; i >= 0 && i < queue.length; i += direction) {
-    const areas = matchingAreas(i);
-    if (areas.length) return selectImage(i, areas[0]);
+  updateOrder();
+  for (let place = rank[imageIndex] + direction; place >= 0 && place < order.length; place += direction) {
+    const areas = matchingAreas(order[place]);
+    if (areas.length) return selectImage(order[place], areas[0]);
   }
 }
 
@@ -423,6 +532,43 @@ function applyFilters() {
     if (target) return selectImage(...target);
   }
   render();
+}
+
+// ---------- URL ----------
+
+// The current view, photo, area and filters as a path, e.g. /compare/6215/1751001268/6215_2?stock=full
+function currentUrl() {
+  const { camera, file } = current();
+  const path = `/${view}/${camera}/${file.replace(".jpg", "")}/${area().area_id}`;
+  const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
+  return query ? `${path}?${query}` : path;
+}
+
+function syncUrl() {
+  const url = currentUrl();
+  if (url !== location.pathname + location.search) history.replaceState(null, "", url);
+}
+
+// Restore the view, filters, photo and area from the URL; false when it names no known photo.
+function readUrl() {
+  const [, viewPart, camera, stem, areaId] = location.pathname.split("/");
+  view = viewPart === "compare" ? "compare" : "annotate";
+  const query = new URLSearchParams(location.search);
+  for (const name of FILTERS) {
+    // Read the value back so an unknown option (e.g. a removed camera) falls back to "".
+    $(`filter-${name}`).value = query.get(name) ?? "";
+    filters[name] = $(`filter-${name}`).value;
+  }
+  const index = queue.findIndex((item) => item.camera === camera && item.file === `${stem}.jpg`);
+  if (index < 0) return false;
+  selectImage(index, Math.max(0, planogram[camera].findIndex((a) => a.area_id === areaId)));
+  return true;
+}
+
+function setView(name) {
+  view = name;
+  history.pushState(null, "", currentUrl());
+  applyFilters();
 }
 
 // ---------- Saving ----------
@@ -470,35 +616,81 @@ function render() {
   renderSidebar();
   renderPhoto();
   renderPanel();
+  renderHeader();
+  syncUrl();
+}
 
-  const total = queue.reduce((sum, item) => sum + planogram[item.camera].length, 0);
-  const done = queue.reduce((sum, item) => sum + doneCount(item), 0);
-  $("bar").style.width = `${(done / total) * 100}%`;
-  $("progress-text").textContent = `${done} / ${total} areas`;
+const signed = (points) => (points > 0 ? `+${points}` : `${points}`);
+const percent = (part, whole) => `${Math.round((100 * part) / whole)}%`;
+
+function renderHeader() {
+  for (const link of document.querySelectorAll("[data-view]")) {
+    if (link.dataset.view === view) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  $("agreement-filter").hidden = view !== "compare";
+  $("sort-control").hidden = view !== "compare";
+  $("progress").hidden = view === "compare";
+  $("summary").hidden = view !== "compare";
+
+  if (view === "annotate") {
+    const total = queue.reduce((sum, item) => sum + planogram[item.camera].length, 0);
+    const done = queue.reduce((sum, item) => sum + doneCount(item), 0);
+    $("bar").style.width = `${(done / total) * 100}%`;
+    $("progress-text").textContent = `${done} / ${total} areas`;
+    return;
+  }
+
+  // Score the predictions on every annotated area, like score.py does.
+  let areas = 0, points = 0, stockRight = 0, complianceRight = 0, missing = 0;
+  for (const { camera, file } of queue) {
+    for (const a of planogram[camera]) {
+      const label = entry(camera, file, a.area_id);
+      if (!label) continue;
+      const predicted = prediction(camera, file, a.area_id);
+      const result = areaPoints(label, predicted);
+      areas++;
+      points += result.compliance + result.stock;
+      stockRight += result.stock === 1;
+      complianceRight += result.compliance === 1;
+      missing += !predicted;
+    }
+  }
+  $("summary").innerHTML = !Object.keys(predictions).length
+    ? `No predictions in ${predictionsFile}. Run <code>python predict.py --out-of-fold</code>, then reload.`
+    : `Predictions in ${predictionsFile}: <strong>${signed(points)} / ${2 * areas}</strong>
+       (${percent(points, 2 * areas)}) on ${areas} annotated areas · stock ${percent(stockRight, areas)} right ·
+       compliance ${percent(complianceRight, areas)} right` + (missing ? ` · ${missing} not predicted` : "");
 }
 
 function renderSidebar() {
   const nav = $("images");
   nav.replaceChildren();
+  updateOrder();
+  // Sorted by mistakes, photos from different cameras mix, so each row names its camera instead of a heading.
+  const sorted = view === "compare" && filters.sort === "wrong";
   let lastCamera;
   let shown = 0;
   let matching = 0;
-  queue.forEach((item, index) => {
+  order.forEach((index) => {
+    const item = queue[index];
     const count = matchingAreas(index).length;
     matching += count;
     if (!count && index !== imageIndex) return;
     shown++;
-    if (item.camera !== lastCamera) {
+    if (!sorted && item.camera !== lastCamera) {
       const heading = document.createElement("h2");
       heading.textContent = `Camera ${item.camera}`;
       nav.append(heading);
       lastCamera = item.camera;
     }
-    const done = doneCount(item);
-    const total = planogram[item.camera].length;
+    // Annotate view: annotated / areas. Compare view: predictions that agree / annotated areas.
+    const done = view === "compare" ? agreeCount(item) : doneCount(item);
+    const total = view === "compare" ? doneCount(item) : planogram[item.camera].length;
     const button = document.createElement("button");
-    button.innerHTML = `<span>${formatTime(item.file)}</span><span class="count${done === total ? " done" : ""}">${done}/${total}</span>`;
-    button.title = item.file;
+    const name = sorted ? `${item.camera} · ${formatTime(item.file)}` : formatTime(item.file);
+    button.innerHTML = `<span>${name}</span><span class="count${total && done === total ? " done" : ""}">${done}/${total}</span>`;
+    button.title = view === "compare" ? `${item.file}: prediction agrees on ${done} of ${total} annotated areas` : item.file;
     button.setAttribute("aria-current", index === imageIndex);
     button.onclick = () => selectImage(index);
     nav.append(button);
@@ -539,18 +731,24 @@ function renderPhoto() {
   const styles = getComputedStyle(document.documentElement);
   const color = (name) => styles.getPropertyValue(name).trim();
 
+  // Short form of an answer for the photo labels: stock initial, plus ✗ for a wrong product.
+  const short = (v) => v.stock_level[0].toUpperCase() + (v.planogram_compliant ? "" : "✗");
+
   areas().forEach((a, index) => {
     const value = entry(camera, file, a.area_id);
+    const predicted = prediction(camera, file, a.area_id);
+    const result = agreement(camera, file, a.area_id);
     const selected = index === areaIndex;
     context.globalAlpha = selected || matches(imageIndex, index) ? 1 : 0.3;
-    const stroke = selected ? color("--accent")
-      : value ? (value.planogram_compliant ? color("--ok") : color("--bad"))
-      : color("--idle");
+    // Annotate view colours by compliance; compare view by whether the prediction agrees with the label.
+    const marked = view === "compare" ? result : value;
+    const good = view === "compare" ? result?.stock && result?.compliance : value?.planogram_compliant;
+    const stroke = selected ? color("--accent") : marked ? (good ? color("--ok") : color("--bad")) : color("--idle");
 
     context.beginPath();
     a.quad.forEach(([x, y], i) => (i ? context.lineTo(x, y) : context.moveTo(x, y)));
     context.closePath();
-    if (value && !selected) {
+    if (marked && !selected) {
       context.fillStyle = stroke + "33";
       context.fill();
     }
@@ -558,7 +756,12 @@ function renderPhoto() {
     context.strokeStyle = stroke;
     context.stroke();
 
-    const label = a.area_id.split("_")[1] + (value ? ` · ${value.stock_level}` : "");
+    const number = a.area_id.split("_")[1];
+    let label = number + (value ? ` · ${value.stock_level}` : "");
+    if (view === "compare") {
+      const mine = value ? short(value) : "?";
+      label = predicted && (!value || !good) ? `${number} · ${mine}→${short(predicted)}` : value ? `${number} · ${mine}` : number;
+    }
     const x = a.quad.reduce((sum, p) => sum + p[0], 0) / 4;
     const y = a.quad.reduce((sum, p) => sum + p[1], 0) / 4;
     context.font = "bold 14px system-ui, sans-serif";
@@ -597,6 +800,7 @@ function renderPanel() {
         stock <strong>${stock_level}</strong> (${stock_value})</p>`;
     });
   $("example").hidden = !examples.length;
+  renderComparison();
   $("example").innerHTML = `<span class="tag">Challenge document example</span>${examples.join("")}`;
 
   for (const button of document.querySelectorAll("[data-compliant]")) {
@@ -605,6 +809,37 @@ function renderPanel() {
   for (const button of document.querySelectorAll("[data-stock]")) {
     button.setAttribute("aria-pressed", value?.stock_level === button.dataset.stock);
   }
+}
+
+function renderComparison() {
+  const box = $("comparison");
+  box.hidden = view !== "compare";
+  if (box.hidden) return;
+
+  const { camera, file } = current();
+  const id = area().area_id;
+  const label = entry(camera, file, id);
+  const predicted = prediction(camera, file, id);
+  const describe = (value, other) => {
+    const compliance = value.planogram_compliant ? "Compliant" : "Wrong product";
+    const stock = value.stock_level[0].toUpperCase() + value.stock_level.slice(1);
+    const differs = (part) => (other && part ? ' class="diff"' : "");
+    return `<span${differs(other?.planogram_compliant !== value.planogram_compliant)}>${compliance}</span> ·
+      <span${differs(other?.stock_level !== value.stock_level)}>${stock}</span>`;
+  };
+
+  let points = "";
+  if (label) {
+    const result = areaPoints(label, predicted);
+    const total = result.compliance + result.stock;
+    const reason = result.stock === -2 ? ", prediction below your label" : result.stock === -3 ? ", prediction above your label" : "";
+    points = `<dt>Points</dt><dd><span class="${total > 0 ? "gain" : "loss"}">${signed(total)}</span>
+      (compliance ${signed(result.compliance)}, stock ${signed(result.stock)}${reason})</dd>`;
+  }
+  box.innerHTML = `
+    <dt>Your label</dt><dd>${label ? describe(label, predicted) : '<span class="none">Not annotated</span>'}</dd>
+    <dt>Prediction</dt><dd>${predicted ? describe(predicted, label) : '<span class="none">No prediction</span>'}</dd>
+    ${points}`;
 }
 
 // ---------- Input ----------
@@ -636,16 +871,23 @@ document.querySelectorAll("[data-stock]").forEach((button) =>
 for (const name of FILTERS) {
   $(`filter-${name}`).addEventListener("change", (event) => {
     filters[name] = event.target.value;
-    try { localStorage.setItem("filters", JSON.stringify(filters)); } catch {}
     event.target.blur();
     applyFilters();
   });
 }
 $("reset-filters").onclick = () => {
   for (const name of FILTERS) $(`filter-${name}`).value = filters[name] = "";
-  try { localStorage.removeItem("filters"); } catch {}
   applyFilters();
 };
+for (const link of document.querySelectorAll("[data-view]")) {
+  link.addEventListener("click", (event) => {
+    event.preventDefault();
+    setView(link.dataset.view);
+  });
+}
+window.addEventListener("popstate", () => {
+  if (readUrl()) applyFilters();
+});
 $("previous").onclick = previousArea;
 $("next").onclick = nextArea;
 $("clear").onclick = clearArea;
@@ -673,21 +915,19 @@ document.addEventListener("keydown", (event) => {
   const state = await (await fetch("/api/state")).json();
   planogram = state.planogram;
   annotations = state.annotations;
+  predictions = state.predictions;
+  predictionsFile = state.predictionsFile;
   queue = Object.entries(state.images).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
 
   for (const camera of Object.keys(state.images)) $("filter-camera").add(new Option(camera, camera));
-  try { Object.assign(filters, JSON.parse(localStorage.getItem("filters")) ?? {}); } catch {}
-  for (const name of FILTERS) {
-    // Read the value back so a stale saved option (e.g. a removed camera) falls back to "".
-    $(`filter-${name}`).value = filters[name];
-    filters[name] = $(`filter-${name}`).value;
-  }
 
-  // Resume at the first image that still has unannotated areas.
-  const resume = queue.findIndex((item) => doneCount(item) < planogram[item.camera].length);
-  const index = Math.max(0, resume);
-  const firstOpen = planogram[queue[index].camera].findIndex((a) => !entry(queue[index].camera, queue[index].file, a.area_id));
-  selectImage(index, Math.max(0, firstOpen));
+  // Open the place the URL names; otherwise resume at the first image that still has unannotated areas.
+  if (!readUrl()) {
+    const resume = queue.findIndex((item) => doneCount(item) < planogram[item.camera].length);
+    const index = Math.max(0, resume);
+    const firstOpen = planogram[queue[index].camera].findIndex((a) => !entry(queue[index].camera, queue[index].file, a.area_id));
+    selectImage(index, Math.max(0, firstOpen));
+  }
   applyFilters();
 })();
 </script>

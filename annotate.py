@@ -1,6 +1,8 @@
-"""Local website for manually annotating the camera photos into an annotations.json file.
+"""Local website for manually annotating the camera photos, and for comparing predictions with the annotations.
 
-Run inside nix-shell with `python annotate.py`, then open http://localhost:8000
+Run inside `nix develop` with `python annotate.py`, then open http://localhost:8000. Pages live at
+/annotate/<camera>/<photo>/<area> and /compare/<camera>/<photo>/<area>, with filters in the query string, so
+reloading or sharing a link keeps your place.
 """
 
 import argparse
@@ -10,6 +12,7 @@ import re
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import cv2
 import numpy as np
@@ -20,6 +23,8 @@ from planogram import area_quad, load_cameras
 ROOT = Path(__file__).parent
 IMAGE_PATH = re.compile(r"^/image/(\d+)/(\d+)\.jpg$")
 CROP_PATH = re.compile(r"^/crop/(\d+)/(\d+)/(\w+)\.jpg$")
+# The page itself, at / or /<view>[/<camera>[/<photo>[/<area>]]].
+PAGE_PATH = re.compile(r"^/((annotate|compare)(/\d+(/\d+(/\w+)?)?)?/?)?$")
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -46,18 +51,19 @@ class Handler(SimpleHTTPRequestHandler):
         return path if camera in self.planogram and path.is_file() else None
 
     def do_GET(self):
-        if self.path == "/":
+        path = urlsplit(self.path).path
+        if PAGE_PATH.match(path):
             self.path = "/annotate.html"
             return super().do_GET()
 
-        if self.path == "/api/state":
+        if path == "/api/state":
             return self.send_json(self.state())
 
-        if match := IMAGE_PATH.match(self.path):
+        if match := IMAGE_PATH.match(path):
             if path := self.image_path(*match.groups()):
                 return self.send(200, path.read_bytes(), "image/jpeg")
 
-        if match := CROP_PATH.match(self.path):
+        if match := CROP_PATH.match(path):
             camera, timestamp, area_id = match.groups()
             path = self.image_path(camera, timestamp)
             area = next((a for a in self.planogram.get(camera, {}).get("products", []) if a["area_id"] == area_id), None)
@@ -82,8 +88,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_json({"saved": True})
 
     def state(self):
-        output = self.options.output
-        annotations = json.loads(output.read_text()) if output.exists() else {}
+        output, predictions = self.options.output, self.options.predictions
         return {
             "planogram": {
                 camera: [
@@ -101,7 +106,9 @@ class Handler(SimpleHTTPRequestHandler):
                 camera: sorted(path.name for path in (self.options.cameras / camera).glob("*.jpg"))
                 for camera in sorted(self.planogram)
             },
-            "annotations": annotations,
+            "annotations": json.loads(output.read_text()) if output.exists() else {},
+            "predictions": json.loads(predictions.read_text()) if predictions.exists() else {},
+            "predictionsFile": str(predictions),
         }
 
 
@@ -110,6 +117,8 @@ def main():
     parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
     parser.add_argument("--cameras", type=Path, default=Path("input/cameras"))
     parser.add_argument("--output", type=Path, default=Path("input/annotations.json"))
+    parser.add_argument("--predictions", type=Path, default=Path("output/annotations.json"),
+                        help="predictions to compare with (from predict.py; use --out-of-fold for honest ones)")
     parser.add_argument("--port", type=int, default=8000)
     options = parser.parse_args()
 
