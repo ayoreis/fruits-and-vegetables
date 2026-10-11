@@ -69,7 +69,7 @@
     padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px;
     background: var(--panel); color: var(--text); font: inherit;
   }
-  .page-link { color: var(--muted); text-decoration: none; white-space: nowrap; }
+  .page-link { margin-left: auto; color: var(--muted); text-decoration: none; white-space: nowrap; }
   .page-link:hover { color: var(--text); text-decoration: underline; }
   .summary strong { color: var(--text); }
   #save-status.error { color: var(--bad); }
@@ -100,6 +100,8 @@
   nav .count { color: var(--muted); font-variant-numeric: tabular-nums; }
   nav button[aria-current="true"] .count { color: #111; }
   nav .count.done { color: var(--ok); }
+  #history button .sub { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+  #history button[aria-current="true"] .sub { color: #111; }
 
   .viewer { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
   .photo-bar { display: flex; align-items: center; gap: 12px; }
@@ -174,6 +176,49 @@
 
   .help { font-size: 12px; color: var(--muted); margin: 0; }
   .help kbd { margin: 0 2px 0 0; }
+
+  .stats-view { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .stats-view h2 { font-size: 15px; margin: 0 0 8px; }
+  .stats-view p { margin: 0 0 8px; color: var(--muted); }
+  .stats-view p strong { color: var(--text); }
+  .stats-view table { border-collapse: collapse; font-size: 13px; max-width: 760px; }
+  .stats-view th, .stats-view td { padding: 4px 12px 4px 0; text-align: left; border-bottom: 1px solid var(--border); }
+  .stats-view th.num, .stats-view td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .stats-view tr.total td { font-weight: 600; border-bottom: 0; }
+  .stats-view .gain { color: var(--ok); }
+  .stats-view .loss { color: var(--bad); }
+  .stats-head { display: flex; align-items: center; gap: 12px; }
+  .stats-head h2 { margin: 0; }
+  button.download {
+    padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+  }
+  button.download:hover { border-color: var(--muted); }
+
+  .run-view { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  .run-view h2 { font-size: 15px; margin: 0 0 8px; }
+  .run-view p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+  .run-panel { max-width: 760px; }
+  #run-form { display: grid; grid-template-columns: 150px minmax(0, 520px); gap: 8px 12px; align-content: start; align-items: center; }
+  #run-form input[type="number"], #run-form input[type="text"], #run-form select {
+    width: 100%; padding: 5px 6px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel); color: var(--text); font: inherit; font-size: 13px;
+  }
+  #run-form .choices label { display: flex; align-items: center; gap: 6px; cursor: pointer; white-space: nowrap; }
+  #run-form .choices input { accent-color: var(--accent); }
+  #run-submit {
+    padding: 8px 18px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--text); color: var(--pressed-text); font: inherit; font-weight: 600;
+  }
+  #run-submit:hover { opacity: .85; }
+  #run-error { color: var(--bad); }
+  .pill { padding: 1px 8px; border-radius: 9px; font-size: 11px; font-weight: 600; }
+  .pill.running { background: var(--accent); color: #111; }
+  .pill.error { background: var(--bad); color: #fff; }
+  #run-result pre.log {
+    margin: 8px 0 0; padding: 8px 10px; max-height: 320px; overflow: auto; max-width: 900px;
+    background: #000; color: #ddd; border-radius: 4px; font: 11px/1.5 ui-monospace, monospace; white-space: pre-wrap;
+  }
 </style>
 </head>
 <body>
@@ -182,6 +227,7 @@
   <div class="views" aria-label="View">
     <a href="/admin/annotate" data-view="annotate">Annotate</a>
     <a href="/admin/compare" data-view="compare">Compare</a>
+    <a href="/admin/run" data-view="run">Runs</a>
   </div>
   <p class="summary" id="summary" hidden></p>
   <div class="progress" id="progress">
@@ -193,9 +239,9 @@
   <a class="page-link" href="/staff">Staff view →</a>
 </header>
 
-<main>
-  <nav>
-    <div class="filters">
+<main id="admin-main">
+  <nav id="admin-nav">
+    <div class="filters" id="admin-filters">
       <label>Status
         <select id="filter-status">
           <option value="">All areas</option>
@@ -239,9 +285,13 @@
       <p class="matching"><span id="matching"></span><button id="reset-filters" hidden>Reset</button></p>
     </div>
     <div id="images"></div>
+    <div id="history-wrap" hidden>
+      <h2>Runs</h2>
+      <div id="history"></div>
+    </div>
   </nav>
 
-  <section class="viewer">
+  <section class="viewer" id="viewer">
     <div class="photo-bar">
       <p id="image-title"></p>
       <button id="timelapse" title="Step through this camera's photos across the day (Space)"></button>
@@ -293,6 +343,79 @@
       </div>
     </div>
   </section>
+
+  <section class="run-view" id="run-view" hidden>
+    <div class="stats-view" id="run-result"></div>
+    <div class="run-panel">
+      <h2>New run</h2>
+      <form id="run-form">
+        <span class="group-label">Mode</span>
+        <div class="choices three" role="group" aria-label="Run mode">
+          <label><input type="radio" name="run-mode" value="predict" checked> Predict</label>
+          <label><input type="radio" name="run-mode" value="out-of-fold"> Out-of-fold</label>
+          <label><input type="radio" name="run-mode" value="evaluate"> Evaluate</label>
+        </div>
+
+        <span class="group-label" id="run-model-label">Model</span>
+        <div id="run-models-single">
+          <select id="run-model" aria-labelledby="run-model-label"></select>
+        </div>
+        <div id="run-models-multi" hidden>
+          <div class="choices three" id="run-models"></div>
+          <p class="help">Several models to compare; only used by evaluate.</p>
+        </div>
+
+        <span class="group-label only-predict" id="run-bias-label">Lower bias</span>
+        <div class="only-predict">
+          <input id="run-lower-bias" type="number" value="0" step="0.1" aria-labelledby="run-bias-label">
+        </div>
+
+        <span class="group-label only-oof" id="run-folds-label" hidden>Folds</span>
+        <div class="only-oof" hidden>
+          <input id="run-folds" type="number" value="10" min="2" step="1" aria-labelledby="run-folds-label">
+        </div>
+
+        <span class="group-label only-evaluate" id="run-rounds-label" hidden>Rounds</span>
+        <div class="only-evaluate" hidden>
+          <input id="run-rounds" type="number" value="20" min="1" step="1" aria-labelledby="run-rounds-label">
+        </div>
+
+        <span class="group-label only-evaluate" id="run-biases-label" hidden>Biases</span>
+        <div class="only-evaluate" hidden>
+          <input id="run-biases" type="text" value="0" aria-labelledby="run-biases-label">
+        </div>
+
+        <span class="group-label only-evaluate" id="run-split-label" hidden>Split</span>
+        <div class="only-evaluate" hidden>
+          <select id="run-split" aria-labelledby="run-split-label">
+            <option value="photos">Hidden photos</option>
+            <option value="cameras">Hidden cameras</option>
+          </select>
+        </div>
+
+        <span class="group-label" id="run-jobs-label">Processes</span>
+        <div>
+          <input id="run-jobs" type="number" value="-1" step="1" aria-labelledby="run-jobs-label">
+        </div>
+
+        <span class="group-label" id="run-device-label">Device</span>
+        <div>
+          <select id="run-device" aria-labelledby="run-device-label">
+            <option value="auto">Auto (a GPU if available)</option>
+            <option value="cpu">CPU</option>
+            <option value="cuda">CUDA</option>
+            <option value="mps">MPS (Apple silicon)</option>
+          </select>
+        </div>
+
+        <span></span>
+        <div><button id="run-submit" type="submit">Start run</button></div>
+      </form>
+      <p class="note">Trains on the current hand labels. Each predict run writes a new
+        versioned file — nothing is overwritten. <em>Set as latest</em> makes a run the submission file.</p>
+      <p class="error" id="run-error" hidden></p>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -312,7 +435,14 @@ const DOCUMENT_EXAMPLES = {
 let planogram, annotations;
 let predictions = {};
 let predictionsFile = "";
-// "annotate" or "compare"; kept in the URL along with the photo, area and filters.
+let models = [];
+let defaultModel = "ensemble";
+let runJobs = [];
+let runPoll = null;
+let selectedRun = "latest";
+const runPredictions = new Map();
+let resultToken = 0;
+// "annotate", "compare" or "run"; kept in the URL along with the photo, area and filters.
 let view = "annotate";
 let queue = [];
 let imageIndex = 0;
@@ -593,7 +723,7 @@ function stepImage(direction) {
 
 // After the filters change, stay put if the current area still matches, else go to the next match.
 function applyFilters() {
-  if (!matches(imageIndex, areaIndex)) {
+  if (!current() || !matches(imageIndex, areaIndex)) {
     const all = positions().filter((p) => matches(...p));
     const target = all.find((p) => isBefore([imageIndex, areaIndex], p)) ?? all[0];
     if (target) return selectImage(...target);
@@ -603,16 +733,36 @@ function applyFilters() {
 
 // ---------- URL ----------
 
-// The current view, photo, area and filters as a path, e.g. /admin/compare/6215/1751001268/6215_2?stock=full
+// The current view as a path: /admin/run,
+// or e.g. /admin/compare/6215/1751001268/6215_2?stock=full
 // Which saved predictions to show ("latest" = output/annotations.json); kept in the URL as ?predictions=.
 const chosenPredictions = new URLSearchParams(location.search).get("predictions") || "latest";
 
 function fillPredictionsSelect(state) {
   const select = $("predictions-select");
-  for (const name of state.predictionOptions) {
-    select.add(new Option(name === "latest" ? "Latest run" : name, name));
+  const kept = select.value;
+  select.replaceChildren();
+  select.add(new Option("Latest run", "latest"));
+  // Runs first (each keeps its own output file), then files no run points at
+  // (older CLI outputs and the live per-model files).
+  const linked = new Set();
+  const runs = document.createElement("optgroup");
+  runs.label = "Runs";
+  for (const item of state.history) {
+    if (!item.file) continue;
+    linked.add(item.file);
+    runs.append(new Option(`${item.label} · run ${item.id}`, item.file));
   }
-  select.value = state.predictionsName;
+  if (runs.children.length) select.append(runs);
+  const files = document.createElement("optgroup");
+  files.label = "Files";
+  for (const name of state.predictionOptions) {
+    if (name === "latest" || linked.has(name)) continue;
+    files.append(new Option(name, name));
+  }
+  if (files.children.length) select.append(files);
+  const values = new Set(["latest", ...linked, ...state.predictionOptions]);
+  select.value = values.has(kept) ? kept : state.predictionsName;
   select.onchange = () => {
     const url = new URL(location.href);
     if (select.value === "latest") url.searchParams.delete("predictions");
@@ -621,12 +771,39 @@ function fillPredictionsSelect(state) {
   };
 }
 
+async function downloadPredictions(name) {
+  const response = await fetch(`/api/predictions/${encodeURIComponent(name)}`);
+  if (!response.ok) return;
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(await response.blob());
+  link.download = `${name}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+}
+
+// Copy one predictions file to "Latest run" (the only thing that ever changes it).
+async function promoteLatest(name, button) {
+  const response = await fetch("/api/latest", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!response.ok) return;
+  await refreshState();
+  button.textContent = "Latest ✓";
+  button.disabled = true;
+}
+
 function currentUrl() {
-  const { camera, file } = current();
-  const path = `/admin/${view}/${camera}/${file.replace(".jpg", "")}/${area().area_id}`;
   const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
   if (chosenPredictions !== "latest") query.set("predictions", chosenPredictions);
-  return query.size ? `${path}?${query}` : path;
+  if (view === "run" && selectedRun !== "latest") query.set("run", selectedRun);
+  const suffix = query.size ? `?${query}` : "";
+  if (view === "run") return `/admin/run${suffix}`;
+  const { camera, file } = current();
+  return `/admin/${view}/${camera}/${file.replace(".jpg", "")}/${area().area_id}${suffix}`;
 }
 
 function syncUrl() {
@@ -637,12 +814,19 @@ function syncUrl() {
 // Restore the view, filters, photo and area from the URL; false when it names no known photo.
 function readUrl() {
   const [, , viewPart, camera, stem, areaId] = location.pathname.split("/");
-  view = viewPart === "compare" ? "compare" : "annotate";
+  view = ["annotate", "compare", "run"].includes(viewPart) ? viewPart : "annotate";
   const query = new URLSearchParams(location.search);
   for (const name of FILTERS) {
     // Read the value back so an unknown option (e.g. a removed camera) falls back to "".
     $(`filter-${name}`).value = query.get(name) ?? "";
     filters[name] = $(`filter-${name}`).value;
+  }
+  if (view === "run") {
+    const wanted = query.get("run") ?? "latest";
+    selectedRun = wanted === "latest" || runJobs.some((job) => String(job.id) === wanted) ? wanted : "latest";
+    imageIndex = 0;
+    areaIndex = 0;
+    return true;
   }
   const index = queue.findIndex((item) => item.camera === camera && item.file === `${stem}.jpg`);
   if (index < 0) return false;
@@ -698,27 +882,103 @@ function save() {
 // ---------- Rendering ----------
 
 function render() {
-  renderSidebar();
-  renderPhoto();
-  renderPanel();
   renderHeader();
-  renderTimelapse();
+  const run = view === "run";
+  $("viewer").hidden = run;
+  $("run-view").hidden = !run;
+  $("admin-filters").hidden = run;
+  $("images").hidden = run;
+  $("history-wrap").hidden = !run;
+  if (run) {
+    renderHistory();
+    renderRunResult();
+  } else {
+    renderSidebar();
+    renderPhoto();
+    renderPanel();
+    renderTimelapse();
+  }
   syncUrl();
 }
 
 const signed = (points) => (points > 0 ? `+${points}` : `${points}`);
 const percent = (part, whole) => `${Math.round((100 * part) / whole)}%`;
 
+// Points per scoring case, mirroring shelf/score.py; a missing prediction scores worst.
+const POINTS = {
+  identification_correct: 1,
+  identification_wrong: -2,
+  stock_correct: 1,
+  stock_below: -2,
+  stock_above: -3,
+};
+const CASE_LABELS = {
+  identification_correct: "Identification correct",
+  identification_wrong: "Identification wrong",
+  stock_correct: "Stock level correct",
+  stock_below: "Stock level below the real stock",
+  stock_above: "Stock level above the real stock",
+};
+
+function stockCase(label, predicted) {
+  if (!predicted) return "stock_above";
+  if (predicted.stock_value === label.stock_value) return "stock_correct";
+  return predicted.stock_value < label.stock_value ? "stock_below" : "stock_above";
+}
+
+// Counts of each scoring case over annotated areas for one predictions object,
+// plus per-camera totals and how many annotated areas lack a prediction.
+function computeStats(preds) {
+  const counts = {
+    identification_correct: 0,
+    identification_wrong: 0,
+    stock_correct: 0,
+    stock_below: 0,
+    stock_above: 0,
+  };
+  const byCamera = {};
+  let missing = 0;
+  for (const { camera, file } of queue) {
+    for (const a of planogram[camera]) {
+      const label = entry(camera, file, a.area_id);
+      if (!label) continue;
+      const predicted = preds[camera]?.[file]?.[a.area_id];
+      const idCase = predicted && predicted.planogram_compliant === label.planogram_compliant
+        ? "identification_correct"
+        : "identification_wrong";
+      const stCase = stockCase(label, predicted);
+      counts[idCase]++;
+      counts[stCase]++;
+      const row = (byCamera[camera] ??= { areas: 0, points: 0, identification: 0, stock: 0, missing: 0 });
+      row.areas++;
+      row.points += POINTS[idCase] + POINTS[stCase];
+      row.identification += idCase === "identification_correct";
+      row.stock += stCase === "stock_correct";
+      if (!predicted) {
+        missing++;
+        row.missing++;
+      }
+    }
+  }
+  return { counts, byCamera, missing };
+}
+
+const casePoints = (counts) => Object.entries(counts).reduce((sum, [c, n]) => sum + POINTS[c] * n, 0);
+
 function renderHeader() {
-  $("model-picker").hidden = view !== "compare";
+  $("model-picker").hidden = view === "annotate" || view === "run";
   for (const link of document.querySelectorAll("[data-view]")) {
     if (link.dataset.view === view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
   }
   $("agreement-filter").hidden = view !== "compare";
   $("sort-control").hidden = view !== "compare";
-  $("progress").hidden = view === "compare";
-  $("summary").hidden = view !== "compare";
+  $("status-filter").hidden = view === "run";
+  $("stock-filter").hidden = view === "run";
+  $("compliance-filter").hidden = view === "run";
+  $("camera-filter").hidden = view === "run";
+  $("progress").hidden = view !== "annotate";
+  $("summary").hidden = true;
 
   if (view === "annotate") {
     const total = queue.reduce((sum, item) => sum + planogram[item.camera].length, 0);
@@ -727,27 +987,268 @@ function renderHeader() {
     $("progress-text").textContent = `${done} / ${total} areas`;
     return;
   }
+  if (view === "run") return;
 
-  // Score the predictions on every annotated area, like score.py does.
-  let areas = 0, points = 0, stockRight = 0, complianceRight = 0, missing = 0;
-  for (const { camera, file } of queue) {
-    for (const a of planogram[camera]) {
-      const label = entry(camera, file, a.area_id);
-      if (!label) continue;
-      const predicted = prediction(camera, file, a.area_id);
-      const result = areaPoints(label, predicted);
-      areas++;
-      points += result.compliance + result.stock;
-      stockRight += result.stock === 1;
-      complianceRight += result.compliance === 1;
-      missing += !predicted;
-    }
+  // Scores live on the Runs page now; compare only warns when there is nothing to compare.
+  if (!Object.keys(predictions).length) {
+    $("summary").hidden = false;
+    $("summary").innerHTML = `No predictions in ${predictionsFile}. Start a run on the Runs page, then reload.`;
   }
-  $("summary").innerHTML = !Object.keys(predictions).length
-    ? `No predictions in ${predictionsFile}. Run <code>python -m shelf.predict --out-of-fold</code>, then reload.`
-    : `Predictions in ${predictionsFile}: <strong>${signed(points)} / ${2 * areas}</strong>
-       (${percent(points, 2 * areas)}) on ${areas} annotated areas · stock ${percent(stockRight, areas)} right ·
-       compliance ${percent(complianceRight, areas)} right` + (missing ? ` · ${missing} not predicted` : "");
+}
+
+function fillStatsTable(table, headers, rows) {
+  table.replaceChildren();
+  const head = document.createElement("tr");
+  for (const [text, numeric] of headers) {
+    const cell = document.createElement("th");
+    cell.textContent = text;
+    if (numeric) cell.className = "num";
+    head.append(cell);
+  }
+  table.append(head);
+  for (const row of rows) {
+    const element = document.createElement("tr");
+    if (row.total) element.className = "total";
+    for (const [text, numeric, tone] of row.cells) {
+      const cell = document.createElement("td");
+      cell.textContent = text;
+      if (numeric) cell.className = "num";
+      if (tone) cell.classList.add(tone);
+      element.append(cell);
+    }
+    table.append(element);
+  }
+}
+
+// Table rows for the per-case and per-camera stats, like `python -m shelf.score`.
+function statsTableRows(counts, areas) {
+  const points = casePoints(counts);
+  const rows = Object.keys(CASE_LABELS).map((c) => {
+    const n = counts[c];
+    const earned = POINTS[c] * n;
+    const lost = (1 - POINTS[c]) * n; // correct answers earn +1, so this is what each error cost
+    return {
+      cells: [
+        [CASE_LABELS[c], false],
+        [String(n), true],
+        [percent(n, areas), true],
+        [`${POINTS[c] > 0 ? "+" : ""}${POINTS[c]}`, true],
+        [signed(earned), true, earned >= 0 ? "gain" : "loss"],
+        [lost ? `-${lost}` : "—", true, lost ? "loss" : null],
+      ],
+    };
+  });
+  rows.push({
+    total: true,
+    cells: [
+      ["Total", false],
+      ["", false],
+      ["", false],
+      ["", false],
+      [signed(points), true, points >= 0 ? "gain" : "loss"],
+      [`-${2 * areas - points}`, true, "loss"],
+    ],
+  });
+  return rows;
+}
+
+function cameraTableRows(byCamera) {
+  return Object.keys(byCamera).sort().map((camera) => {
+    const row = byCamera[camera];
+    return {
+      cells: [
+        [camera, false],
+        [String(row.areas), true],
+        [`${signed(row.points)} / ${2 * row.areas}`, true, row.points >= 0 ? "gain" : "loss"],
+        [percent(row.points, 2 * row.areas), true],
+        [percent(row.identification, row.areas), true],
+        [percent(row.stock, row.areas), true],
+      ],
+    };
+  });
+}
+
+// A run's (or the latest run's) stats: summary, per-case and per-camera tables.
+function statsResult(preds, title, fileName) {
+  const section = document.createElement("div");
+  const head = document.createElement("div");
+  head.className = "stats-head";
+  const heading = document.createElement("h2");
+  heading.textContent = title;
+  head.append(heading);
+  if (fileName) {
+    const download = document.createElement("button");
+    download.className = "download";
+    download.textContent = "Download JSON";
+    download.onclick = () => downloadPredictions(fileName);
+    head.append(download);
+  }
+  if (fileName && fileName !== "latest") {
+    const promote = document.createElement("button");
+    promote.className = "download";
+    promote.textContent = "Set as latest";
+    promote.onclick = () => promoteLatest(fileName, promote);
+    head.append(promote);
+  }
+  section.append(head);
+  const { counts, byCamera, missing } = computeStats(preds);
+  const areas = counts.identification_correct + counts.identification_wrong;
+  if (!areas) {
+    const note = document.createElement("p");
+    note.textContent = "No annotated areas yet.";
+    section.append(note);
+    return section;
+  }
+  const identification = counts.identification_correct / areas;
+  const stock = counts.stock_correct / areas;
+  const summary = document.createElement("p");
+  summary.innerHTML = `On ${areas} annotated areas: ` +
+    `<strong>${signed(casePoints(counts))} / ${2 * areas}</strong> (${percent(casePoints(counts), 2 * areas)} of maximum) · ` +
+    `${percent(counts.identification_correct + counts.stock_correct, 2 * areas)} answers right ` +
+    `(identification ${percent(identification * 100, 100)}, stock level ${percent(stock * 100, 100)})`;
+  section.append(summary);
+  const table = document.createElement("table");
+  table.setAttribute("aria-label", "Points per error kind");
+  fillStatsTable(table,
+    [["Case", false], ["Areas", true], ["Share", true], ["Each", true], ["Points", true], ["Lost", true]],
+    statsTableRows(counts, areas),
+  );
+  section.append(table);
+  if (missing) {
+    const note = document.createElement("p");
+    note.textContent =
+      `${missing} annotated ${missing === 1 ? "area has" : "areas have"} no prediction ` +
+      `(counted as wrong identification and stock above).`;
+    section.append(note);
+  }
+  const camerasHeading = document.createElement("h2");
+  camerasHeading.textContent = "By camera";
+  section.append(camerasHeading);
+  const cameras = document.createElement("table");
+  cameras.setAttribute("aria-label", "Points per camera");
+  fillStatsTable(cameras,
+    [["Camera", false], ["Areas", true], ["Points", true], ["Of max", true], ["Identification", true], ["Stock", true]],
+    cameraTableRows(byCamera),
+  );
+  section.append(cameras);
+  return section;
+}
+
+// One predictions file by selection name ("latest" or a run's output), fetched once and cached.
+async function fetchRunPredictions(name) {
+  if (!runPredictions.has(name)) {
+    const response = await fetch(`/api/predictions/${encodeURIComponent(name)}`);
+    runPredictions.set(name, response.ok ? await response.json() : null);
+  }
+  return runPredictions.get(name);
+}
+
+function logPre(job, scroll) {
+  const log = document.createElement("pre");
+  log.className = "log";
+  log.textContent = job.log || (job.status === "running" ? "Starting…" : "");
+  if (scroll) log.dataset.scroll = "1";
+  return log;
+}
+
+function selectRun(id) {
+  selectedRun = id;
+  render();
+}
+
+function historyItem(id, title, sub, status) {
+  const button = document.createElement("button");
+  const text = document.createElement("span");
+  const name = document.createElement("span");
+  name.textContent = title;
+  const detail = document.createElement("span");
+  detail.className = "sub";
+  detail.textContent = sub;
+  text.append(name, detail);
+  button.append(text);
+  // Done is the normal state, so only running and failed runs get a badge.
+  if (status && status !== "done") {
+    const pill = document.createElement("span");
+    pill.className = `pill ${status}`;
+    pill.textContent = status === "running" ? "Running" : "Error";
+    button.append(pill);
+  }
+  button.setAttribute("aria-current", String(selectedRun) === String(id));
+  button.onclick = () => selectRun(String(id));
+  return button;
+}
+
+function renderHistory() {
+  const list = $("history");
+  list.replaceChildren(historyItem("latest", "Latest run", "output/annotations.json", null));
+  for (const job of runJobs) {
+    const sub = job.status === "running"
+      ? "running…"
+      : `${job.status} · ${formatDuration((job.finished ?? Date.now() / 1000) - job.started)}`;
+    list.append(historyItem(job.id, job.label, sub, job.status));
+  }
+  clearInterval(runPoll);
+  runPoll = null;
+  if (runJobs.some((job) => job.status === "running")) runPoll = setInterval(refreshRuns, 2000);
+}
+
+// The selected run's result: live log while running, its stats once a predict run finishes,
+// the log for evaluate runs and failures.
+async function renderRunResult() {
+  const token = ++resultToken;
+  const box = $("run-result");
+  box.replaceChildren();
+  const show = (element) => {
+    if (token === resultToken) box.append(element);
+  };
+  if (selectedRun === "latest") {
+    const preds = await fetchRunPredictions("latest");
+    if (token !== resultToken) return;
+    if (!preds) {
+      const note = document.createElement("p");
+      note.textContent = "No predictions yet — start a predict run below.";
+      show(note);
+      return;
+    }
+    show(statsResult(preds, "Latest run", "latest"));
+    return;
+  }
+  const job = runJobs.find((candidate) => String(candidate.id) === String(selectedRun));
+  if (!job) {
+    selectedRun = "latest";
+    render();
+    return;
+  }
+  if (job.status === "running") {
+    const heading = document.createElement("h2");
+    heading.textContent = job.label;
+    show(heading);
+    show(logPre(job, true));
+    box.querySelectorAll("pre.log[data-scroll]").forEach((pre) => {
+      pre.scrollTop = pre.scrollHeight;
+    });
+    return;
+  }
+  // job.file is the run's own kept output; older runs only have the live name, which may
+  // since have been overwritten — their stats then describe the newer file, and say so.
+  const name = job.file ?? job.predictions ?? null;
+  if (job.status === "error" || !name) {
+    const heading = document.createElement("h2");
+    heading.textContent = `${job.label} · ${job.status}`;
+    show(heading);
+    show(logPre(job, false));
+    return;
+  }
+  const preds = await fetchRunPredictions(name);
+  if (token !== resultToken) return;
+  if (!preds) {
+    const note = document.createElement("p");
+    note.textContent = `No predictions file for this run (${name}.json) — it may have been deleted.`;
+    show(note);
+    show(logPre(job, false));
+    return;
+  }
+  show(statsResult(preds, job.file ? job.label : `${job.label} (live file, may postdate this run)`, name));
 }
 
 function renderSidebar() {
@@ -797,6 +1298,11 @@ function renderSidebar() {
 function renderPhoto() {
   const { camera, file } = current();
   $("image-title").textContent = `Camera ${camera} · ${file} · ${formatTime(file)}`;
+  // Views that never select an image (Run) leave `photo` empty; start loading on demand.
+  if (!photo.src) {
+    photo = loadPhoto(camera, file);
+    if (!photo.complete) photo.onload = render;
+  }
   if (!photo.complete || !photo.naturalWidth) return;
 
   canvas.width = photo.naturalWidth;
@@ -1013,18 +1519,151 @@ document.addEventListener("keydown", (event) => {
   event.preventDefault();
 });
 
+// ---------- Run view ----------
+
+function runMode() {
+  return document.querySelector('input[name="run-mode"]:checked').value;
+}
+
+// Show the model picker that fits the mode, and the rows each mode needs.
+function syncRunForm() {
+  const mode = runMode();
+  $("run-models-single").hidden = mode === "evaluate";
+  $("run-models-multi").hidden = mode !== "evaluate";
+  for (const el of document.querySelectorAll(".only-evaluate")) el.hidden = mode !== "evaluate";
+  for (const el of document.querySelectorAll(".only-predict")) el.hidden = mode === "evaluate";
+  for (const el of document.querySelectorAll(".only-oof")) el.hidden = mode !== "out-of-fold";
+}
+
+function formatDuration(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  if (total < 60) return `${total}s`;
+  return `${Math.floor(total / 60)}m ${String(total % 60).padStart(2, "0")}s`;
+}
+
+// Poll the server; when a run finishes, show its stats right away and offer fresh predictions.
+async function refreshRuns() {
+  let finishedId = null;
+  try {
+    const before = new Map(runJobs.map((job) => [job.id, job.status]));
+    runJobs = (await (await fetch("/api/runs")).json()).runs;
+    const done = runJobs.find((job) => before.get(job.id) === "running" && job.status !== "running");
+    if (done) finishedId = String(done.id);
+  } catch (error) {
+    return;
+  }
+  if (finishedId) {
+    runPredictions.clear();
+    await refreshState();
+    selectedRun = finishedId;
+  }
+  if (view === "run") render();
+  else if (!runJobs.some((job) => job.status === "running")) {
+    clearInterval(runPoll);
+    runPoll = null;
+  }
+}
+
+async function submitRun(event) {
+  event.preventDefault();
+  const error = $("run-error");
+  error.hidden = true;
+  const mode = runMode();
+  const body = {
+    mode,
+    models: mode === "evaluate"
+      ? [...document.querySelectorAll('input[name="run-models"]:checked')].map((box) => box.value)
+      : [$("run-model").value],
+    lower_bias: parseFloat($("run-lower-bias").value),
+    folds: parseInt($("run-folds").value),
+    rounds: parseInt($("run-rounds").value),
+    biases: $("run-biases").value,
+    split: $("run-split").value,
+    jobs: parseInt($("run-jobs").value),
+    device: $("run-device").value,
+  };
+  let response;
+  try {
+    response = await fetch("/api/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    error.textContent = `Could not reach the server: ${e.message}`;
+    error.hidden = false;
+    return;
+  }
+  const data = await response.json();
+  if (!response.ok) {
+    error.textContent = data.error ?? `Server refused the run (${response.status})`;
+    error.hidden = false;
+    return;
+  }
+  selectedRun = String(data.id);
+  await refreshRuns();
+}
+
+function buildCameraOptions(images) {
+  const select = $("filter-camera");
+  const kept = select.value;
+  select.replaceChildren(new Option("All", ""));
+  for (const camera of Object.keys(images)) select.add(new Option(camera, camera));
+  select.value = kept in images ? kept : "";
+  filters.camera = select.value;
+}
+
+function buildModelControls() {
+  const keptSingle = $("run-model").value || defaultModel;
+  const keptMulti = new Set(
+    [...document.querySelectorAll('input[name="run-models"]:checked')].map((box) => box.value),
+  );
+  $("run-model").replaceChildren(...models.map((name) => new Option(name, name)));
+  $("run-model").value = models.includes(keptSingle) ? keptSingle : defaultModel;
+  const boxes = $("run-models");
+  boxes.replaceChildren(...models.map((name) => {
+    const label = document.createElement("label");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.name = "run-models";
+    box.value = name;
+    box.checked = keptMulti.size ? keptMulti.has(name) : name === defaultModel;
+    label.append(box, ` ${name}`);
+    return label;
+  }));
+}
+
 // ---------- Start ----------
 
-(async () => {
+// Reload labels, predictions and the run/model choices; keeps the user's filter and form picks.
+async function refreshState() {
   const state = await (await fetch(`/api/state?predictions=${encodeURIComponent(chosenPredictions)}`)).json();
   fillPredictionsSelect(state);
   planogram = state.planogram;
   annotations = state.annotations;
   predictions = state.predictions;
   predictionsFile = state.predictionsFile;
+  models = state.models;
+  defaultModel = state.defaultModel;
   queue = Object.entries(state.images).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
+  buildCameraOptions(state.images);
+  buildModelControls();
+  runPredictions.clear();
+}
 
-  for (const camera of Object.keys(state.images)) $("filter-camera").add(new Option(camera, camera));
+for (const radio of document.querySelectorAll('input[name="run-mode"]')) {
+  radio.addEventListener("change", syncRunForm);
+}
+$("run-form").addEventListener("submit", submitRun);
+
+(async () => {
+  await refreshState();
+  syncRunForm();
+  try {
+    runJobs = (await (await fetch("/api/runs")).json()).runs;
+  } catch (error) {
+    runJobs = [];
+  }
 
   // Open the place the URL names; otherwise resume at the first image that still has unannotated areas.
   if (!readUrl()) {
