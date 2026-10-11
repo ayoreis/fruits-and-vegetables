@@ -303,6 +303,13 @@
           <option value="wrong">Most wrong predictions</option>
         </select>
       </label>
+      <label id="source-filter" hidden>Photos
+        <select id="filter-source">
+          <option value="">Training + uploaded</option>
+          <option value="training">Training only</option>
+          <option value="uploaded">Uploaded only</option>
+        </select>
+      </label>
       <p class="matching"><span id="matching"></span><button id="reset-filters" hidden>Reset</button></p>
     </div>
     <div id="images"></div>
@@ -519,7 +526,7 @@ let areaIndex = 0;
 // Compliance chosen for the current area before its stock level is set.
 let pendingCompliant = true;
 let photo = new Image();
-const FILTERS = ["status", "stock", "compliance", "camera", "agreement", "sort"];
+const FILTERS = ["status", "stock", "compliance", "camera", "agreement", "sort", "source"];
 let filters = { status: "", stock: "", compliance: "", camera: "", agreement: "", sort: "" };
 // Photo indices in display order, and each photo's place in it; navigation follows the same order.
 let order = [];
@@ -564,10 +571,14 @@ const agreeCount = ({ camera, file }) =>
     return result?.stock && result?.compliance;
   }).length;
 
-// Whether area `j` of image `i` passes the filters. Stock and compliance filters only match annotated areas;
+// Whether area `j` of image `i` passes the filters. Uploaded photos never match in the
+// annotate view (validation must not become training labels); the source filter picks them
+// out in the compare view. Stock and compliance filters only match annotated areas;
 // the prediction filter only applies in the compare view.
 function matches(i, j) {
-  const { camera, file } = queue[i];
+  const { camera, file, source } = queue[i];
+  if (view === "annotate" && source !== "training") return false;
+  if (filters.source && source !== filters.source) return false;
   if (filters.camera && camera !== filters.camera) return false;
   const id = planogram[camera][j].area_id;
   const value = entry(camera, file, id);
@@ -893,6 +904,8 @@ function readUrl() {
   }
   const index = queue.findIndex((item) => item.camera === camera && item.file === `${stem}.jpg`);
   if (index < 0) return false;
+  // Deep links to uploaded photos only open in compare; annotate stays training-only.
+  if (view === "annotate" && queue[index].source !== "training") return false;
   selectImage(index, Math.max(0, planogram[camera].findIndex((a) => a.area_id === areaId)));
   return true;
 }
@@ -1083,6 +1096,7 @@ function renderHeader() {
   }
   $("agreement-filter").hidden = view !== "compare";
   $("sort-control").hidden = view !== "compare";
+  $("source-filter").hidden = view !== "compare";
   $("status-filter").hidden = view === "run";
   $("stock-filter").hidden = view === "run";
   $("compliance-filter").hidden = view === "run";
@@ -1091,8 +1105,9 @@ function renderHeader() {
   $("summary").hidden = true;
 
   if (view === "annotate") {
-    const total = queue.reduce((sum, item) => sum + planogram[item.camera].length, 0);
-    const done = queue.reduce((sum, item) => sum + doneCount(item), 0);
+    const training = queue.filter((item) => item.source === "training");
+    const total = training.reduce((sum, item) => sum + planogram[item.camera].length, 0);
+    const done = training.reduce((sum, item) => sum + doneCount(item), 0);
     $("bar").style.width = `${(done / total) * 100}%`;
     $("progress-text").textContent = `${done} / ${total} areas`;
     return;
@@ -1418,7 +1433,8 @@ function renderSidebar() {
     const done = view === "compare" ? agreeCount(item) : doneCount(item);
     const total = view === "compare" ? doneCount(item) : planogram[item.camera].length;
     const button = document.createElement("button");
-    const name = sorted ? `${item.camera} · ${formatTime(item.file)}` : formatTime(item.file);
+    const tag = item.source === "uploaded" ? " · upload" : "";
+    const name = sorted ? `${item.camera} · ${formatTime(item.file)}${tag}` : `${formatTime(item.file)}${tag}`;
     button.innerHTML = `<span>${name}</span><span class="count${total && done === total ? " done" : ""}">${done}/${total}</span>`;
     button.title = view === "compare" ? `${item.file}: prediction agrees on ${done} of ${total} annotated areas` : item.file;
     button.setAttribute("aria-current", index === imageIndex);
@@ -1439,7 +1455,8 @@ function renderSidebar() {
 
 function renderPhoto() {
   const { camera, file } = current();
-  $("image-title").textContent = `Camera ${camera} · ${file} · ${formatTime(file)}`;
+  const tag = current().source === "uploaded" ? " · upload" : "";
+  $("image-title").textContent = `Camera ${camera} · ${file} · ${formatTime(file)}${tag}`;
   // Views that never select an image (Run) leave `photo` empty; start loading on demand.
   if (!photo.src) {
     photo = loadPhoto(camera, file);
@@ -1907,7 +1924,10 @@ async function refreshState() {
   models = state.models;
   defaultModel = state.defaultModel;
   predictionNames = state.predictionOptions;
-  queue = Object.entries(state.images).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
+  queue = Object.entries(state.images).flatMap(([camera, files]) => [
+    ...files.map((file) => ({ camera, file, source: "training" })),
+    ...(state.uploads[camera] ?? []).map((file) => ({ camera, file, source: "uploaded" })),
+  ]);
   uploadsQueue = Object.entries(state.uploads ?? {}).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
   buildCameraOptions(state.images);
   buildModelControls();
@@ -1946,9 +1966,10 @@ $("solution-form").addEventListener("submit", uploadSolution);
     runJobs = [];
   }
 
-  // Open the place the URL names; otherwise resume at the first image that still has unannotated areas.
+  // Open the place the URL names; otherwise resume at the first training image
+  // that still has unannotated areas (uploads are never annotatable).
   if (!readUrl()) {
-    const resume = queue.findIndex((item) => doneCount(item) < planogram[item.camera].length);
+    const resume = queue.findIndex((item) => item.source === "training" && doneCount(item) < planogram[item.camera].length);
     const index = Math.max(0, resume);
     const firstOpen = planogram[queue[index].camera].findIndex((a) => !entry(queue[index].camera, queue[index].file, a.area_id));
     selectImage(index, Math.max(0, firstOpen));
