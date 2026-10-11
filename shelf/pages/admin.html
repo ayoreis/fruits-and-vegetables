@@ -507,6 +507,7 @@ let defaultModel = "ensemble";
 let runJobs = [];
 let runPoll = null;
 let selectedRun = "latest";
+let predictionNames = [];
 const runPredictions = new Map();
 let resultToken = 0;
 // "annotate", "compare" or "run"; kept in the URL along with the photo, area and filters.
@@ -884,7 +885,8 @@ function readUrl() {
   }
   if (view === "run") {
     const wanted = query.get("run") ?? "latest";
-    selectedRun = wanted === "latest" || runJobs.some((job) => String(job.id) === wanted) ? wanted : "latest";
+    selectedRun = wanted === "latest" || wanted.startsWith("file:") ||
+      runJobs.some((job) => String(job.id) === wanted) ? wanted : "latest";
     imageIndex = 0;
     areaIndex = 0;
     return true;
@@ -1308,6 +1310,12 @@ function renderHistory() {
       : `${job.status} · ${formatDuration((job.finished ?? Date.now() / 1000) - job.started)}`;
     list.append(historyItem(job.id, job.label, sub, job.status));
   }
+  // Files no run points at (older CLI outputs, pruned runs): still viewable, by file name.
+  const linked = new Set(runJobs.map((job) => job.file).filter(Boolean));
+  for (const name of predictionNames) {
+    if (name === "latest" || linked.has(name)) continue;
+    list.append(historyItem(`file:${name}`, name, "file on disk", null));
+  }
   clearInterval(runPoll);
   runPoll = null;
   if (runJobs.some((job) => job.status === "running")) runPoll = setInterval(refreshRuns, 2000);
@@ -1335,6 +1343,19 @@ async function renderRunResult() {
     return;
   }
   const job = runJobs.find((candidate) => String(candidate.id) === String(selectedRun));
+  if (selectedRun.startsWith("file:")) {
+    const name = selectedRun.slice("file:".length);
+    const preds = await fetchRunPredictions(name);
+    if (token !== resultToken) return;
+    if (!preds) {
+      const note = document.createElement("p");
+      note.textContent = `No predictions file (${name}.json) — it may have been deleted.`;
+      show(note);
+      return;
+    }
+    show(statsResult(preds, `${name} (file on disk)`, name));
+    return;
+  }
   if (!job) {
     selectedRun = "latest";
     render();
@@ -1885,6 +1906,7 @@ async function refreshState() {
   predictionsFile = state.predictionsFile;
   models = state.models;
   defaultModel = state.defaultModel;
+  predictionNames = state.predictionOptions;
   queue = Object.entries(state.images).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
   uploadsQueue = Object.entries(state.uploads ?? {}).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
   buildCameraOptions(state.images);
