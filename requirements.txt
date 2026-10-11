@@ -1,3 +1,9 @@
+# CPU-only PyTorch: the default Linux wheels bundle several GB of CUDA libraries.
+--extra-index-url https://download.pytorch.org/whl/cpu
 numpy
 opencv-python-headless
 pillow
+torch
+open_clip_torch
+timm
+scikit-learn

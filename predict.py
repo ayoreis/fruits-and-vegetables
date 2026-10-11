@@ -1,27 +1,28 @@
 """Predict compliance and stock level for every planogram area of every photo.
 
-Writes the challenge's submission format: {camera: {image file: {area_id: {planogram_compliant, stock_level, stock_value}}}}.
-Every area of every image is included, since a missing area scores worst of all.
+Trains the shelf model (see model.py) on the manual annotations, then writes the challenge's submission format:
+{camera: {image file: {area_id: {planogram_compliant, stock_level, stock_value}}}}. Every area of every image is
+included, since a missing area scores worst of all.
+
+With --evaluate, it instead estimates the validation score: it repeatedly hides 1-2 labelled photos per camera,
+trains on the rest and scores the hidden ones.
 """
 
 import argparse
 import json
+import random
+from collections import Counter
 from pathlib import Path
 
 import cv2
 import numpy as np
 
 from cut_areas import cut_area
+from model import FeatureExtractor, ShelfModel
 from planogram import area_quad, load_cameras
-from score import POINTS, STOCK_VALUES, area_cases
+from score import POINTS, STOCK_VALUES, area_cases, points, score
 
-
-def predict_area(crop, area):
-    """Probabilities for one area: (chance it is compliant, {stock level: chance}).
-
-    Baseline: ignores the image and returns the same guess for every area. Replace this with a real model.
-    """
-    return 0.9, {"empty": 1 / 3, "half": 1 / 3, "full": 1 / 3}
+VALIDATION_AREAS = 289
 
 
 def expected_points(prediction, compliant_probability, stock_probabilities):
@@ -44,26 +45,103 @@ def decide(compliant_probability, stock_probabilities):
     return max(candidates, key=lambda prediction: expected_points(prediction, compliant_probability, stock_probabilities))
 
 
+def area_crops(planogram, cameras_dir, photos):
+    """Crops of every area in the given (camera, file) photos, keyed by (camera, file, area id); unreadable photos are skipped."""
+    crops = {}
+    for camera, file in photos:
+        image = cv2.imread(str(cameras_dir / camera / file))
+        if image is None:
+            print(f"Skipping unreadable photo {cameras_dir / camera / file}")
+            continue
+        for area in planogram[camera]["products"]:
+            crops[camera, file, area["area_id"]] = cut_area(image, np.array(area_quad(area), dtype=np.float32))
+    return crops
+
+
+def nested(keys, values):
+    result = {}
+    for (camera, file, area_id), value in zip(keys, values):
+        result.setdefault(camera, {}).setdefault(file, {})[area_id] = value
+    return result
+
+
+def evaluate(features, keys, labels, rounds):
+    """Average held-out score over several random picks of 1-2 hidden photos per camera."""
+    photos = {}
+    for camera, file, _ in keys:
+        photos.setdefault(camera, set()).add(file)
+
+    scaled = []
+    for round_number in range(rounds):
+        rng = random.Random(round_number)
+        hidden = {
+            (camera, file)
+            for camera, files in photos.items()
+            for file in rng.sample(sorted(files), 2 if len(files) >= 3 else 1)
+        }
+        test = np.array([(camera, file) in hidden for camera, file, _ in keys])
+        model = ShelfModel().fit({name: value[~test] for name, value in features.items()}, [l for l, t in zip(labels, test) if not t])
+        answers = [decide(*p) for p in model.predict({name: value[test] for name, value in features.items()})]
+        test_keys = [key for key, t in zip(keys, test) if t]
+        truth = nested(test_keys, [l for l, t in zip(labels, test) if t])
+        total = points(sum(score(nested(test_keys, answers), truth).values(), Counter()))
+        scaled.append(VALIDATION_AREAS * total / len(test_keys))
+        print(f"  round {round_number + 1}: {scaled[-1]:+.0f} / {2 * VALIDATION_AREAS}")
+
+    mean = np.mean(scaled)
+    print(f"\nEstimated validation score: {mean:+.0f} / {2 * VALIDATION_AREAS} ({mean / (2 * VALIDATION_AREAS):.0%}), "
+          f"from {min(scaled):+.0f} to {max(scaled):+.0f} across rounds")
+
+
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
-    parser.add_argument("--cameras", type=Path, default=Path("input/cameras"))
+    parser.add_argument("--cameras", type=Path, default=Path("input/cameras"), help="photos to predict")
+    parser.add_argument("--annotations", type=Path, default=Path("input/annotations.json"), help="labels to train on")
+    parser.add_argument("--train-cameras", type=Path, default=Path("input/cameras"), help="photos the labels refer to")
     parser.add_argument("--output", type=Path, default=Path("output/annotations.json"))
+    parser.add_argument("--evaluate", type=int, nargs="?", const=20, metavar="ROUNDS",
+                        help="estimate the validation score instead of predicting")
     args = parser.parse_args()
 
-    predictions = {}
-    for camera, camera_data in sorted(load_cameras(args.planogram).items()):
-        for image_path in sorted((args.cameras / camera).glob("*.jpg")):
-            image = cv2.imread(str(image_path))
-            areas = predictions.setdefault(camera, {}).setdefault(image_path.name, {})
-            for area in camera_data["products"]:
-                crop = cut_area(image, np.array(area_quad(area), dtype=np.float32)) if image is not None else None
-                areas[area["area_id"]] = decide(*predict_area(crop, area))
+    planogram = load_cameras(args.planogram)
+    annotations = json.loads(args.annotations.read_text())
+    extract = FeatureExtractor(planogram)
+
+    train_crops = area_crops(planogram, args.train_cameras, [(c, f) for c, images in annotations.items() for f in images])
+    train_keys = [
+        (camera, file, area_id)
+        for camera, images in annotations.items()
+        for file, areas in images.items()
+        for area_id in areas
+        if (camera, file, area_id) in train_crops
+    ]
+    labels = [annotations[camera][file][area_id] for camera, file, area_id in train_keys]
+    train_features = extract(train_keys, [train_crops[key] for key in train_keys])
+    print(f"Training on {len(labels)} labelled areas from {len({k[:2] for k in train_keys})} photos")
+
+    if args.evaluate:
+        evaluate(train_features, train_keys, labels, args.evaluate)
+        return
+
+    model = ShelfModel().fit(train_features, labels)
+
+    photos = [(camera, path.name) for camera in sorted(planogram) for path in sorted((args.cameras / camera).glob("*.jpg"))]
+    crops = area_crops(planogram, args.cameras, photos)
+    keys = list(crops)
+    answers = [decide(*p) for p in model.predict(extract(keys, [crops[key] for key in keys]))]
+    predictions = nested(keys, answers)
+
+    # A photo that can't be read still gets an answer for every area: the cautious "compliant, empty".
+    cautious = decide(1.0, {level: 1 / 3 for level in STOCK_VALUES})
+    for camera, file in photos:
+        for area in planogram[camera]["products"]:
+            predictions.setdefault(camera, {}).setdefault(file, {}).setdefault(area["area_id"], cautious)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(predictions, indent=2))
     count = sum(len(areas) for images in predictions.values() for areas in images.values())
-    print(f"Wrote {count} area predictions for {sum(len(images) for images in predictions.values())} images to {args.output}")
+    print(f"Wrote {count} area predictions for {len(photos)} photos to {args.output}")
 
 
 if __name__ == "__main__":
