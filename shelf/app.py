@@ -5,6 +5,7 @@ Run inside `nix develop` with `python -m shelf.app`, then open http://localhost:
 - /staff: what store staff need to do, from the latest predictions for each camera.
 - /admin/annotate/<camera>/<photo>/<area>: label photos by hand.
 - /admin/compare/<camera>/<photo>/<area>: compare predictions with the labels.
+- /admin/run: run shelf.predict on the server, browse past runs, and see each run's stats.
 
 Filters and the selected task live in the URL, so reloading or sharing a link keeps your place.
 """
@@ -13,7 +14,10 @@ import argparse
 import json
 import os
 import re
+import subprocess
+import sys
 import threading
+import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,18 +27,101 @@ import cv2
 import numpy as np
 
 from shelf.crops import cut_area
+from shelf.models import DEFAULT_MODEL, MODELS
 from shelf.planogram import area_quad, load_cameras
 
 # The staff and admin pages.
 ROOT = Path(__file__).parent / "pages"
+# The repository root: predict runs here so its relative output/cache paths land in the right place.
+REPO = Path(__file__).resolve().parent.parent
 IMAGE_PATH = re.compile(r"^/image/(\d+)/(\d+)\.jpg$")
 CROP_PATH = re.compile(r"^/crop/(\d+)/(\d+)/(\w+)\.jpg$")
 # The admin page at /admin[/<view>[/<camera>[/<photo>[/<area>]]]], and its old address without /admin.
-ADMIN_PATH = re.compile(r"^/admin(/(annotate|compare)(/\d+(/\d+(/\w+)?)?)?)?/?$")
-OLD_ADMIN_PATH = re.compile(r"^/(annotate|compare)(/\d+(/\d+(/\w+)?)?)?/?$")
+# (/admin/stats is kept as a redirect to /admin/run, which now shows each run's stats.)
+ADMIN_PATH = re.compile(r"^/admin(/(annotate|compare|run)(/\d+(/\d+(/\w+)?)?)?)?/?$")
+OLD_ADMIN_PATH = re.compile(r"^/(annotate|compare|run)(/\d+(/\d+(/\w+)?)?)?/?$")
 STAFF_PATH = re.compile(r"^/staff/?$")
 # Tasks staff marked done, one per area of a specific photo.
 done_lock = threading.Lock()
+# Background predict runs, newest last; at most one runs at a time.
+runs_lock = threading.Lock()
+runs = {}
+run_number = [0]
+running_run = [None]
+MAX_RUN_LOG = 100_000
+MAX_RUNS = 20
+DEVICES = ("auto", "cpu", "cuda", "mps")
+
+
+def run_worker(job_id, command, runs_file, versioned_stem):
+    """Run predict in the repository root, streaming its output into the job's log.
+
+    Predict modes write straight to their versioned file (see --output-only), so later runs
+    never rewrite history; job["file"] names the run's own output (None when it kept nothing).
+    """
+    try:
+        process = subprocess.Popen(command, cwd=str(REPO), stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except Exception as error:
+        with runs_lock:
+            job = runs[job_id]
+            job["log"] += f"Failed to start: {error}\n"
+            job["status"], job["finished"] = "error", time.time()
+            if running_run[0] == job_id:
+                running_run[0] = None
+        save_runs(runs_file)
+        return
+    with process.stdout:
+        for line in process.stdout:
+            with runs_lock:
+                job = runs[job_id]
+                job["log"] += line
+                job["log"] = job["log"][-MAX_RUN_LOG:]
+    process.wait()
+    with runs_lock:
+        job = runs[job_id]
+        job["status"] = "done" if process.returncode == 0 else "error"
+        job["returncode"] = process.returncode
+        job["finished"] = time.time()
+        if job["status"] == "done":
+            job["file"] = versioned_stem
+        if running_run[0] == job_id:
+            running_run[0] = None
+    save_runs(runs_file)
+
+
+def load_runs(runs_file):
+    """Past runs back into memory; anything still marked running died with the last server."""
+    try:
+        stored = json.loads(Path(runs_file).read_text()).get("runs", [])
+    except (OSError, ValueError):
+        return
+    with runs_lock:
+        for job in stored[-MAX_RUNS:]:
+            if job.get("status") == "running":
+                job["status"] = "error"
+                job["log"] = (job.get("log") or "") + "\nServer restarted while this run was going.\n"
+                job["finished"] = job.get("finished") or time.time()
+            runs[job["id"]] = job
+        if runs:
+            run_number[0] = max(runs)
+
+
+def save_runs(runs_file):
+    """Past runs to disk, so the history sidebar survives a restart; drops the oldest beyond MAX_RUNS."""
+    with runs_lock:
+        finished = sorted(job_id for job_id in runs if runs[job_id]["status"] != "running")
+        for job_id in finished[:-MAX_RUNS + 1] if len(finished) >= MAX_RUNS else []:
+            del runs[job_id]
+        payload = {"runs": [runs[job_id] for job_id in sorted(runs)]}
+    try:
+        path = Path(runs_file)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(payload, indent=2))
+        os.replace(temporary, path)
+    except OSError:
+        pass
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -89,6 +176,10 @@ class Handler(SimpleHTTPRequestHandler):
             return self.redirect("/staff")
         if STAFF_PATH.match(path):
             return self.page("staff.html")
+        if path == "/admin/stats" or path.startswith("/admin/stats/"):
+            return self.redirect("/admin/run" + (f"?{url.query}" if url.query else ""))
+        if path == "/stats" or path == "/stats/":
+            return self.redirect("/admin/run" + (f"?{url.query}" if url.query else ""))
         if ADMIN_PATH.match(path):
             return self.page("admin.html")
         if OLD_ADMIN_PATH.match(path):
@@ -96,6 +187,18 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/state":
             return self.send_json(self.state(parse_qs(url.query).get("predictions", ["latest"])[0]))
+
+        if path == "/api/runs":
+            with runs_lock:
+                return self.send_json({"runs": [runs[job_id] for job_id in sorted(runs, reverse=True)]})
+
+        if path.startswith("/api/predictions/"):
+            # One run's predictions by selection name (see prediction_files); unknown names 404.
+            name = path[len("/api/predictions/"):]
+            file = self.prediction_files().get(name)
+            if file is not None and file.exists():
+                return self.send(200, file.read_bytes(), "application/json")
+            return self.send(404, b"No such predictions", "text/plain")
 
         if match := IMAGE_PATH.match(path):
             if path := self.image_path(*match.groups()):
@@ -125,18 +228,151 @@ class Handler(SimpleHTTPRequestHandler):
                 (done.add if body["done"] else done.discard)(body["task"])
                 self.write_json(self.options.done, sorted(done))
             return self.send_json({"saved": True})
+        if self.path == "/api/latest":
+            # body: {"name": "<predictions selection>"}; copies that file to --predictions ("Latest run").
+            # Runs never touch the latest file themselves; this is the only way it changes.
+            name = body.get("name") if isinstance(body, dict) else None
+            file = self.prediction_files().get(name) if isinstance(name, str) else None
+            if file is None or not file.exists():
+                return self.send(400, json.dumps({"error": f"No predictions file {name!r}"}).encode(),
+                                 "application/json")
+            dest = Path(self.options.predictions)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            temporary = dest.with_suffix(".json.tmp")
+            temporary.write_bytes(file.read_bytes())
+            os.replace(temporary, dest)
+            return self.send_json({"saved": True})
+        if self.path == "/api/run":
+            # body: predict.py options (see build_command); starts a background run unless one is going.
+            try:
+                command, label, run_mode, predictions_name = self.build_command(body)
+            except ValueError as error:
+                return self.send(400, json.dumps({"error": str(error)}).encode(), "application/json")
+            with runs_lock:
+                if running_run[0] is not None and runs[running_run[0]]["status"] == "running":
+                    return self.send(409, json.dumps(
+                        {"error": f"Run {running_run[0]} ({runs[running_run[0]]['label']}) is still going"}).encode(),
+                        "application/json")
+                run_number[0] += 1
+                job = {"id": run_number[0], "label": label, "mode": run_mode, "predictions": predictions_name,
+                       "file": None, "command": " ".join(command),
+                       "status": "running", "returncode": None,
+                       "started": time.time(), "finished": None, "log": ""}
+                runs[job["id"]] = job
+                running_run[0] = job["id"]
+                for old in [job_id for job_id in sorted(runs) if runs[job_id]["status"] != "running"][:-MAX_RUNS + 1]:
+                    del runs[old]
+            # Predict modes write straight to output/history/<timestamp>.json of their own (--output-only);
+            # output/annotations.json is only ever touched by promoting a run (POST /api/latest).
+            versioned_stem = None
+            if predictions_name:
+                history_dir = (Path.cwd() / self.options.predictions_dir).parent / "history"
+                stem = str(int(time.time()))
+                while (history_dir / f"{stem}.json").exists():
+                    stem = str(int(stem) + 1)
+                versioned_stem = stem
+                versioned_path = str((history_dir / f"{stem}.json").resolve())
+                command, label, run_mode, predictions_name = self.build_command(body, versioned_path)
+                with runs_lock:
+                    job["command"] = " ".join(command)
+            save_runs(self.options.runs)
+            threading.Thread(target=run_worker,
+                             args=(job["id"], command, self.options.runs, versioned_stem),
+                             daemon=True).start()
+            return self.send_json({"id": job["id"], "label": label})
         self.send(404, b"Not found", "text/plain")
 
+    def build_command(self, params, output=None):
+        """A `python -m shelf.predict` command from the run form's values; raises ValueError when invalid.
+
+        Paths stay server-configured: labels come from --output (the file the annotate page saves).
+        With an output path (one per run) predict writes only there (--output-only) and never touches
+        --predictions (the pages' "Latest run"); without one it behaves like the CLI default.
+        """
+        if not isinstance(params, dict):
+            raise ValueError("Run options must be a JSON object")
+        mode = params.get("mode", "predict")
+        if mode not in ("predict", "out-of-fold", "evaluate"):
+            raise ValueError(f"Unknown mode {mode!r}; want predict, out-of-fold or evaluate")
+        models = params.get("models") or [DEFAULT_MODEL]
+        unknown = [name for name in models if name not in MODELS]
+        if not models:
+            raise ValueError("Pick at least one model")
+        if unknown:
+            raise ValueError(f"Unknown model(s): {', '.join(unknown)}; want {', '.join(sorted(MODELS))}")
+        device = params.get("device", "auto")
+        if device not in DEVICES:
+            raise ValueError(f"Unknown device {device!r}; want {', '.join(DEVICES)}")
+        try:
+            jobs = int(params.get("jobs", -1))
+        except (TypeError, ValueError):
+            raise ValueError(f"Jobs must be a whole number, not {params.get('jobs')!r}")
+        out = str(Path(output).resolve()) if output is not None else str(Path(self.options.predictions).resolve())
+        command = [sys.executable, "-m", "shelf.predict", "--model", *models,
+                   "--planogram", str(Path(self.options.planogram).resolve()),
+                   "--cameras", str(Path(self.options.cameras).resolve()),
+                   "--train-cameras", str(Path(self.options.cameras).resolve()),
+                   "--annotations", str(Path(self.options.output).resolve()),
+                   "--output", out,
+                   "--jobs", str(jobs), "--device", device]
+        if output is not None:
+            command.append("--output-only")
+        if mode == "evaluate":
+            try:
+                rounds = int(params.get("rounds", 20))
+            except (TypeError, ValueError):
+                raise ValueError(f"Rounds must be a whole number, not {params.get('rounds')!r}")
+            if rounds < 1:
+                raise ValueError("Rounds must be at least 1")
+            biases = params.get("biases", [0.0])
+            if isinstance(biases, str):
+                biases = biases.replace(",", " ").split()
+            try:
+                biases = [float(bias) for bias in biases]
+            except (TypeError, ValueError):
+                raise ValueError(f"Biases must be numbers, not {params.get('biases')!r}")
+            if not biases:
+                raise ValueError("Give at least one bias to compare")
+            split = params.get("split", "photos")
+            if split not in ("photos", "cameras"):
+                raise ValueError(f"Unknown split {split!r}; want photos or cameras")
+            command += ["--evaluate", str(rounds), "--split", split,
+                        "--biases", *(str(bias) for bias in biases)]
+            return command, f"evaluate {', '.join(models)} ({rounds} rounds)", mode, None
+        try:
+            lower_bias = float(params.get("lower_bias", 0.0))
+        except (TypeError, ValueError):
+            raise ValueError(f"Lower bias must be a number, not {params.get('lower_bias')!r}")
+        command += ["--lower-bias", str(lower_bias)]
+        if mode == "out-of-fold":
+            try:
+                folds = int(params.get("folds", 10))
+            except (TypeError, ValueError):
+                raise ValueError(f"Folds must be a whole number, not {params.get('folds')!r}")
+            if folds < 2:
+                raise ValueError("Folds must be at least 2")
+            command += ["--out-of-fold", str(folds)]
+            return command, f"out-of-fold {models[0]} ({folds} folds, bias {lower_bias})", mode, f"{models[0]}.out-of-fold"
+        return command, f"predict {models[0]} (bias {lower_bias})", mode, models[0]
+
     def prediction_files(self):
-        """The predictions to choose from: the latest run, and each model's saved predictions."""
+        """The predictions to choose from: the latest run, each model's saved predictions,
+        and every kept historical output (output/history/<timestamp>.json, newest last)."""
         files = {"latest": self.options.predictions}
         files.update({path.stem: path for path in sorted(self.options.predictions_dir.glob("*.json"))})
+        history_dir = (Path.cwd() / self.options.predictions_dir).parent / "history"
+        files.update({path.stem: path for path in sorted(history_dir.glob("*.json")) if path.stem not in files})
         return files
 
     def state(self, chosen="latest"):
         files = self.prediction_files()
         chosen = chosen if chosen in files else "latest"
         output, predictions = self.options.output, files[chosen]
+        with runs_lock:
+            history = [{"id": runs[job_id]["id"], "label": runs[job_id]["label"],
+                        "status": runs[job_id]["status"], "file": runs[job_id].get("file"),
+                        "finished": runs[job_id]["finished"]}
+                       for job_id in sorted(runs, reverse=True)]
         return {
             "planogram": {
                 camera: [
@@ -159,6 +395,9 @@ class Handler(SimpleHTTPRequestHandler):
             "predictionsFile": str(predictions),
             "predictionsName": chosen,
             "predictionOptions": list(files),
+            "history": history,
+            "models": sorted(MODELS),
+            "defaultModel": DEFAULT_MODEL,
             "done": sorted(self.read_done()),
         }
 
@@ -175,6 +414,8 @@ def main():
     parser.add_argument("--done", type=Path, default=Path("output/staff-done.json"), help="tasks staff marked done")
     parser.add_argument("--port", type=int, default=8000)
     options = parser.parse_args()
+    options.runs = str((Path.cwd() / options.predictions).parent / "runs.json")
+    load_runs(options.runs)
 
     handler = partial(Handler, options=options, planogram=load_cameras(options.planogram))
     server = ThreadingHTTPServer(("127.0.0.1", options.port), handler)
