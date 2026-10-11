@@ -1,7 +1,7 @@
 from PIL import Image
 
-from outline_areas import draw_areas
-from planogram import load_cameras
+from shelf.outlines import draw_areas
+from shelf.planogram import load_cameras
 
 name = "1751013242"
 camname = "6462"

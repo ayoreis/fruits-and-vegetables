@@ -9,7 +9,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from planogram import area_quad, load_cameras
+from shelf.planogram import area_quad, load_cameras
 
 
 def rectangle_size(quad):

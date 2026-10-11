@@ -25,11 +25,11 @@ from sklearn.model_selection import LeaveOneGroupOut
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from cut_areas import cut_area
-from planogram import area_quad, load_cameras
-from predict import decide
-from products import english_name, is_packaged
-from score import POINTS, STOCK_VALUES, identification_case, stock_case
+from shelf.crops import cut_area
+from shelf.planogram import area_quad, load_cameras
+from shelf.decisions import decide
+from shelf.products import english_name, is_packaged
+from shelf.score import POINTS, STOCK_VALUES, identification_case, stock_case
 
 LEVELS = list(STOCK_VALUES)
 GROUPINGS = ("photo", "area", "camera")
@@ -210,7 +210,7 @@ def stock_result(probabilities, labels):
 
 def compliance_result(probabilities, labels):
     uniform = {level: 1 / 3 for level in LEVELS}
-    choices = [decide(p, uniform)["planogram_compliant"] for p in probabilities]
+    choices = [decide(p, uniform, empty_is_compliant=False)["planogram_compliant"] for p in probabilities]
     cases = Counter(identification_case(choice, label["planogram_compliant"]) for choice, label in zip(choices, labels))
     return cases, sum(POINTS[case] * count for case, count in cases.items())
 

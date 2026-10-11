@@ -1,52 +1,34 @@
 """Predict compliance and stock level for every planogram area of every photo.
 
-Trains the shelf model (see model.py) on the manual annotations, then writes the challenge's submission format:
-{camera: {image file: {area_id: {planogram_compliant, stock_level, stock_value}}}}. Every area of every image is
-included, since a missing area scores worst of all.
+Trains a model (see shelf/models.py for the choices) on the manual annotations and writes the challenge's
+submission format: {camera: {image file: {area_id: {planogram_compliant, stock_level, stock_value}}}}. Every area of
+every image is included, since a missing area scores worst of all.
 
-With --evaluate, it instead estimates the validation score: it repeatedly hides 1-2 labelled photos per camera,
-trains on the rest and scores the hidden ones.
+The predictions go to output/predictions/<model>.json, where the staff and admin pages can pick them, and to
+output/annotations.json, the file to submit.
 
-With --out-of-fold, labelled photos are predicted by models that never saw their labels (the photos are split into
-folds, each predicted by a model trained on the others). Comparing those predictions with the annotations, for
-example in the annotator's compare view, then shows the model's real mistakes rather than what it memorised.
+    --evaluate          estimate the validation score instead (compare several models with --model a b c)
+    --split cameras     with --evaluate, test on cameras the model never saw labelled instead of hidden photos
+    --out-of-fold       predict labelled photos with models that never saw their labels, to review mistakes
+                        honestly in the admin compare view (saved as output/predictions/<model>.out-of-fold.json)
 """
 
 import argparse
 import json
-import random
-from collections import Counter
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from cut_areas import cut_area
-from model import FeatureExtractor, ShelfModel
-from planogram import area_quad, load_cameras
-from score import POINTS, STOCK_VALUES, area_cases, points, score
+from shelf.crops import cut_area
+from shelf.decisions import decide
+from shelf.evaluation import evaluate, nested, out_of_fold
+from shelf.features import FeatureExtractor
+from shelf.models import DEFAULT_MODEL, MODELS
+from shelf.planogram import area_quad, load_cameras
+from shelf.score import STOCK_VALUES
 
-VALIDATION_AREAS = 289
-
-
-def expected_points(prediction, compliant_probability, stock_probabilities):
-    """Expected points of a prediction, given how likely each true answer is."""
-    total = 0
-    for actual_compliant, compliant_chance in ((True, compliant_probability), (False, 1 - compliant_probability)):
-        for actual_level, stock_chance in stock_probabilities.items():
-            annotation = {"planogram_compliant": actual_compliant, "stock_value": STOCK_VALUES[actual_level]}
-            total += compliant_chance * stock_chance * sum(POINTS[case] for case in area_cases(prediction, annotation))
-    return total
-
-
-def decide(compliant_probability, stock_probabilities):
-    """Pick the answer with the most expected points; the uneven penalties favour lower stock levels."""
-    candidates = [
-        {"planogram_compliant": compliant, "stock_level": level, "stock_value": value}
-        for compliant in (True, False)
-        for level, value in STOCK_VALUES.items()
-    ]
-    return max(candidates, key=lambda prediction: expected_points(prediction, compliant_probability, stock_probabilities))
+PREDICTIONS = Path("output/predictions")
 
 
 def area_crops(planogram, cameras_dir, photos):
@@ -62,86 +44,34 @@ def area_crops(planogram, cameras_dir, photos):
     return crops
 
 
-def nested(keys, values):
-    result = {}
-    for (camera, file, area_id), value in zip(keys, values):
-        result.setdefault(camera, {}).setdefault(file, {})[area_id] = value
-    return result
-
-
-def subset(features, rows):
-    return {name: value[rows] for name, value in features.items()}
-
-
-def out_of_fold(features, keys, labels, folds):
-    """Answers for every labelled area from a model that didn't see its photo's labels.
-
-    Each camera's photos are dealt round-robin into the folds, so every fold has every camera.
-    """
-    photos = {}
-    for camera, file, _ in keys:
-        photos.setdefault(camera, set()).add(file)
-    fold_of = {}
-    for camera, files in photos.items():
-        shuffled = sorted(files)
-        random.Random(camera).shuffle(shuffled)
-        fold_of.update({(camera, file): i % folds for i, file in enumerate(shuffled)})
-    fold = np.array([fold_of[key[:2]] for key in keys])
-
-    answers = {}
-    for number in range(folds):
-        test = fold == number
-        print(f"  fold {number + 1} of {folds}: predicting {test.sum()} areas")
-        model = ShelfModel().fit(subset(features, ~test), [l for l, t in zip(labels, test) if not t])
-        test_keys = [key for key, t in zip(keys, test) if t]
-        answers.update(zip(test_keys, (decide(*p) for p in model.predict(subset(features, test)))))
-    return answers
-
-
-def evaluate(features, keys, labels, rounds):
-    """Average held-out score over several random picks of 1-2 hidden photos per camera."""
-    photos = {}
-    for camera, file, _ in keys:
-        photos.setdefault(camera, set()).add(file)
-
-    scaled = []
-    for round_number in range(rounds):
-        rng = random.Random(round_number)
-        hidden = {
-            (camera, file)
-            for camera, files in photos.items()
-            for file in rng.sample(sorted(files), 2 if len(files) >= 3 else 1)
-        }
-        test = np.array([(camera, file) in hidden for camera, file, _ in keys])
-        model = ShelfModel().fit(subset(features, ~test), [l for l, t in zip(labels, test) if not t])
-        answers = [decide(*p) for p in model.predict(subset(features, test))]
-        test_keys = [key for key, t in zip(keys, test) if t]
-        truth = nested(test_keys, [l for l, t in zip(labels, test) if t])
-        total = points(sum(score(nested(test_keys, answers), truth).values(), Counter()))
-        scaled.append(VALIDATION_AREAS * total / len(test_keys))
-        print(f"  round {round_number + 1}: {scaled[-1]:+.0f} / {2 * VALIDATION_AREAS}")
-
-    mean = np.mean(scaled)
-    print(f"\nEstimated validation score: {mean:+.0f} / {2 * VALIDATION_AREAS} ({mean / (2 * VALIDATION_AREAS):.0%}), "
-          f"from {min(scaled):+.0f} to {max(scaled):+.0f} across rounds")
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--model", nargs="+", default=[DEFAULT_MODEL], choices=list(MODELS),
+                        help=f"which model (default {DEFAULT_MODEL}); several to compare with --evaluate")
     parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
     parser.add_argument("--cameras", type=Path, default=Path("input/cameras"), help="photos to predict")
     parser.add_argument("--annotations", type=Path, default=Path("input/annotations.json"), help="labels to train on")
     parser.add_argument("--train-cameras", type=Path, default=Path("input/cameras"), help="photos the labels refer to")
-    parser.add_argument("--output", type=Path, default=Path("output/annotations.json"))
+    parser.add_argument("--output", type=Path, default=Path("output/annotations.json"), help="the file to submit")
     parser.add_argument("--evaluate", type=int, nargs="?", const=20, metavar="ROUNDS",
                         help="estimate the validation score instead of predicting")
+    parser.add_argument("--split", choices=["photos", "cameras"], default="photos", help="what --evaluate hides")
     parser.add_argument("--out-of-fold", type=int, nargs="?", const=10, metavar="FOLDS",
                         help="predict labelled photos with models that didn't see their labels")
+    parser.add_argument("--lower-bias", type=float, default=0.0,
+                        help="lean stock answers further toward lower levels (0 = none)")
+    parser.add_argument("--biases", type=float, nargs="+", default=[0.0],
+                        help="lower biases to compare with --evaluate")
+    parser.add_argument("--jobs", type=int, default=-1,
+                        help="processes for --evaluate and --out-of-fold (-1 = all cores)")
+    parser.add_argument("--device", default="auto",
+                        help="where to run the image models: auto (a GPU if available), cpu, cuda or mps")
     args = parser.parse_args()
 
     planogram = load_cameras(args.planogram)
     annotations = json.loads(args.annotations.read_text())
-    extract = FeatureExtractor(planogram)
+    extract = FeatureExtractor(planogram, device=args.device)
+    needs = tuple(dict.fromkeys(name for model in args.model for name in MODELS[model]().needs))
 
     train_crops = area_crops(planogram, args.train_cameras, [(c, f) for c, images in annotations.items() for f in images])
     train_keys = [
@@ -152,21 +82,21 @@ def main():
         if (camera, file, area_id) in train_crops
     ]
     labels = [annotations[camera][file][area_id] for camera, file, area_id in train_keys]
-    train_features = extract(train_keys, [train_crops[key] for key in train_keys])
+    train_features = extract(train_keys, [train_crops[key] for key in train_keys], needs)
     print(f"Training on {len(labels)} labelled areas from {len({k[:2] for k in train_keys})} photos")
 
     if args.evaluate:
-        evaluate(train_features, train_keys, labels, args.evaluate)
+        evaluate(args.model, train_features, train_keys, labels, args.evaluate, args.biases, args.split, args.jobs)
         return
 
-    model = ShelfModel().fit(train_features, labels)
-
+    name = args.model[0]
+    model = MODELS[name]().fit(train_features, labels)
     photos = [(camera, path.name) for camera in sorted(planogram) for path in sorted((args.cameras / camera).glob("*.jpg"))]
     crops = area_crops(planogram, args.cameras, photos)
     keys = list(crops)
-    answers = [decide(*p) for p in model.predict(extract(keys, [crops[key] for key in keys]))]
+    answers = [decide(*p, args.lower_bias) for p in model.predict(extract(keys, [crops[key] for key in keys], needs))]
     if args.out_of_fold:
-        held_out = out_of_fold(train_features, train_keys, labels, args.out_of_fold)
+        held_out = out_of_fold(name, train_features, train_keys, labels, args.out_of_fold, args.lower_bias, args.jobs)
         answers = [held_out.get(key, answer) for key, answer in zip(keys, answers)]
         print(f"{sum(key in held_out for key in keys)} labelled areas predicted out of fold")
     predictions = nested(keys, answers)
@@ -177,10 +107,12 @@ def main():
         for area in planogram[camera]["products"]:
             predictions.setdefault(camera, {}).setdefault(file, {}).setdefault(area["area_id"], cautious)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(predictions, indent=2))
+    saved = PREDICTIONS / f"{name}{'.out-of-fold' if args.out_of_fold else ''}.json"
+    for path in (saved, args.output):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(predictions, indent=2))
     count = sum(len(areas) for images in predictions.values() for areas in images.values())
-    print(f"Wrote {count} area predictions for {len(photos)} photos to {args.output}")
+    print(f"Wrote {count} area predictions for {len(photos)} photos to {saved} and {args.output}")
 
 
 if __name__ == "__main__":

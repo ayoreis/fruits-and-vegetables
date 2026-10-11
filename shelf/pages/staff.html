@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shelf Tasks</title>
+<style>
+  :root {
+    --bg: #f6f6f3;
+    --panel: #ffffff;
+    --text: #1d1d1b;
+    --muted: #6b6b66;
+    --border: #e2e2dc;
+    --accent: #e8a400;
+    --empty: #d0402b;
+    --wrong: #7a4ccf;
+    --low: #d98c00;
+    --ok: #2e8b57;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615;
+      --panel: #1f1f1d;
+      --text: #ecece8;
+      --muted: #9a9a93;
+      --border: #33332f;
+      --accent: #f2b31b;
+      --empty: #ec6550;
+      --wrong: #a07ce6;
+      --low: #f0a92a;
+      --ok: #4caf7a;
+      color-scheme: dark;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.4 system-ui, sans-serif; }
+
+  header {
+    position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+    padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--border);
+  }
+  header h1 { margin: 0; font-size: 17px; }
+  header .store { color: var(--muted); font-size: 13px; }
+  .clock { display: flex; align-items: center; gap: 10px; margin-left: auto; font-size: 13px; color: var(--muted); }
+  .clock strong { color: var(--text); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .clock input { width: 220px; accent-color: var(--accent); }
+  .clock button { all: unset; cursor: pointer; color: var(--muted); text-decoration: underline; }
+  .clock .play {
+    padding: 4px 12px; border-radius: 4px; background: var(--accent); color: #111;
+    font-weight: 600; text-decoration: none; white-space: nowrap;
+  }
+  .model-picker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .model-picker select {
+    padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel); color: var(--text); font: inherit;
+  }
+  .page-link { color: var(--muted); font-size: 13px; text-decoration: none; }
+  .page-link:hover { color: var(--text); text-decoration: underline; }
+
+  main { max-width: 1400px; margin: 0 auto; padding: 16px 20px 40px; }
+
+  .tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .tile {
+    display: grid; gap: 2px; padding: 12px 14px; text-align: left; cursor: pointer;
+    border: 1px solid var(--border); border-left: 6px solid var(--tone); border-radius: 8px;
+    background: var(--panel); color: var(--text); font: inherit;
+  }
+  .tile:hover { border-color: var(--tone); }
+  .tile[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--tone); }
+  .tile .number { font-size: 30px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .tile .what { font-weight: 600; }
+  .tile .hint { color: var(--muted); font-size: 12px; }
+  .tone-empty { --tone: var(--empty); }
+  .tone-wrong { --tone: var(--wrong); }
+  .tone-low { --tone: var(--low); }
+  .tone-ok { --tone: var(--ok); }
+
+  .layout { display: grid; grid-template-columns: minmax(320px, 1fr) minmax(0, 1.25fr); gap: 16px; align-items: start; }
+  @media (max-width: 1000px) {
+    .layout { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .clock { margin-left: 0; width: 100%; }
+    .clock input { flex: 1; width: auto; }
+  }
+
+  .list-heading { display: flex; align-items: baseline; justify-content: space-between; margin: 0 0 8px; }
+  .list-heading h2 { margin: 0; font-size: 15px; }
+  .list-heading span { color: var(--muted); font-size: 13px; }
+  .tasks { display: grid; gap: 8px; }
+  .task {
+    display: grid; grid-template-columns: 76px 1fr auto; gap: 12px; align-items: center; padding: 8px 10px 8px 8px;
+    border: 1px solid var(--border); border-left: 6px solid var(--tone); border-radius: 8px;
+    background: var(--panel); cursor: pointer; text-align: left; color: var(--text); font: inherit; width: 100%;
+  }
+  .task:hover { border-color: var(--tone); }
+  .task[aria-current="true"] { box-shadow: 0 0 0 2px var(--tone); }
+  .task img { width: 76px; height: 56px; object-fit: cover; border-radius: 4px; background: #000; }
+  .task .action { font-weight: 700; color: var(--tone); font-size: 13px; text-transform: uppercase; letter-spacing: .03em; }
+  .task .product { font-weight: 600; }
+  .task .where { color: var(--muted); font-size: 13px; }
+  .task .since { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; }
+  .task.done { opacity: .55; }
+  .task.done .action { text-decoration: line-through; }
+  .empty-state { padding: 24px; text-align: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 8px; }
+  details.done-list { margin-top: 14px; }
+  details.done-list summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-bottom: 8px; }
+
+  .detail { position: sticky; top: 76px; padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  .detail canvas { display: block; width: 100%; height: auto; border-radius: 6px; background: #000; cursor: pointer; }
+  .detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+  .detail-head .action { font-weight: 700; color: var(--tone); text-transform: uppercase; font-size: 13px; letter-spacing: .03em; }
+  .detail-head h3 { margin: 2px 0; font-size: 18px; }
+  .detail-head p { margin: 0; color: var(--muted); font-size: 13px; }
+  .done-button {
+    flex: none; padding: 10px 16px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--tone); color: #fff; font: inherit; font-weight: 600;
+  }
+  .done-button.undo { background: none; color: var(--muted); border: 1px solid var(--border); }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+  .legend span::before {
+    content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px;
+    background: var(--tone); vertical-align: -1px;
+  }
+  .note { color: var(--muted); font-size: 12px; margin: 10px 0 0; }
+  .note a { color: inherit; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Fruits &amp; Vegetables · Shelf tasks</h1>
+    <div class="store">What the ceiling cameras see on each gondola, worst first</div>
+  </div>
+  <div class="clock">
+    <label for="time">Shelves at</label>
+    <strong id="time-label"></strong>
+    <button class="play" id="play" title="Replay the day photo by photo (Space)">▶ Play</button>
+    <input id="time" type="range" step="60" aria-label="Time of day">
+    <button id="now" hidden>Latest</button>
+  </div>
+  <label class="model-picker" id="model-picker">Model <select id="predictions-select"></select></label>
+  <a class="page-link" href="/admin">Admin →</a>
+</header>
+
+<main>
+  <div class="tiles">
+    <button class="tile tone-empty" data-show="empty">
+      <span class="number" id="count-empty">0</span><span class="what">Empty</span>
+      <span class="hint">Restock now: nothing left to sell</span>
+    </button>
+    <button class="tile tone-wrong" data-show="wrong">
+      <span class="number" id="count-wrong">0</span><span class="what">Wrong product</span>
+      <span class="hint">Move products back to their place</span>
+    </button>
+    <button class="tile tone-low" data-show="low">
+      <span class="number" id="count-low">0</span><span class="what">Running low</span>
+      <span class="hint">Restock when you can</span>
+    </button>
+    <button class="tile tone-ok" data-show="ok">
+      <span class="number" id="count-ok">0</span><span class="what">Fine</span>
+      <span class="hint" id="ok-hint">No action needed</span>
+    </button>
+  </div>
+
+  <div class="layout">
+    <section>
+      <div class="list-heading"><h2 id="list-title">To do</h2><span id="list-count"></span></div>
+      <div class="tasks" id="tasks"></div>
+      <details class="done-list" id="done-section" hidden>
+        <summary id="done-summary"></summary>
+        <div class="tasks" id="done-tasks"></div>
+      </details>
+    </section>
+
+    <section class="detail" id="detail" hidden>
+      <div class="detail-head">
+        <div>
+          <div class="action" id="detail-action"></div>
+          <h3 id="detail-product"></h3>
+          <p id="detail-where"></p>
+        </div>
+        <button class="done-button" id="done-button"></button>
+      </div>
+      <canvas id="canvas"></canvas>
+      <div class="legend">
+        <span class="tone-empty">Empty</span><span class="tone-wrong">Wrong product</span>
+        <span class="tone-low">Running low</span><span class="tone-ok">Fine</span>
+      </div>
+      <p class="note" id="detail-note"></p>
+    </section>
+  </div>
+</main>
+
+<script>
+// What each predicted state asks staff to do, most urgent first.
+const STATES = {
+  empty: { rank: 0, action: "Restock now", title: "Empty" },
+  wrong: { rank: 1, action: "Move back", title: "Wrong product" },
+  low: { rank: 2, action: "Restock soon", title: "Running low" },
+  ok: { rank: 3, action: "Fine", title: "Fine" },
+};
+
+let planogram, images, predictions, done;
+// Selected time (unix seconds), list filter ("" or a state) and selected task (area id); all kept in the URL.
+let at, show = "", selected = null;
+let photo = new Image();
+// Photos are cached so the timelapse doesn't reload them.
+const photoCache = new Map();
+// The timelapse timer while the day is replaying.
+let playing = null;
+
+const $ = (id) => document.getElementById(id);
+const canvas = $("canvas");
+const context = canvas.getContext("2d");
+const stamp = (file) => parseInt(file);
+const clock = (seconds) =>
+  new Date(seconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Lisbon" });
+
+function duration(seconds) {
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, "0")} min`;
+}
+
+function stateOf(prediction) {
+  if (!prediction) return null;
+  if (!prediction.planogram_compliant) return "wrong";
+  return { empty: "empty", half: "low", full: "ok" }[prediction.stock_level];
+}
+
+// The latest photo each camera took at or before the selected time.
+function latestPhoto(camera) {
+  return images[camera].filter((file) => stamp(file) <= at).at(-1);
+}
+
+// Every area's state in each camera's latest photo, and since when it has been in that state.
+function shelves() {
+  const areas = [];
+  for (const camera of Object.keys(planogram).sort()) {
+    const file = latestPhoto(camera);
+    if (!file) continue;
+    const earlier = images[camera].filter((f) => stamp(f) <= at);
+    planogram[camera].forEach((area, index) => {
+      const state = stateOf(predictions[camera]?.[file]?.[area.area_id]);
+      if (!state) return;
+      let since = stamp(file);
+      for (let i = earlier.length - 2; i >= 0; i--) {
+        if (stateOf(predictions[camera]?.[earlier[i]]?.[area.area_id]) !== state) break;
+        since = stamp(earlier[i]);
+      }
+      areas.push({ camera, file, area, index, state, since, key: `${camera}|${file}|${area.area_id}` });
+    });
+  }
+  return areas;
+}
+
+// ---------- URL ----------
+
+// Which saved predictions to show ("latest" = output/annotations.json); kept in the URL as ?predictions=.
+const chosenPredictions = new URLSearchParams(location.search).get("predictions") || "latest";
+
+function fillPredictionsSelect(state) {
+  const select = $("predictions-select");
+  for (const name of state.predictionOptions) {
+    select.add(new Option(name === "latest" ? "Latest run" : name, name));
+  }
+  select.value = state.predictionsName;
+  select.onchange = () => {
+    const url = new URL(location.href);
+    if (select.value === "latest") url.searchParams.delete("predictions");
+    else url.searchParams.set("predictions", select.value);
+    location.assign(url);
+  };
+}
+
+function syncUrl() {
+  const query = new URLSearchParams();
+  if (at !== latestTime()) query.set("at", at);
+  if (show) query.set("show", show);
+  if (selected) query.set("task", selected);
+  if (chosenPredictions !== "latest") query.set("predictions", chosenPredictions);
+  const url = `/staff${query.size ? `?${query}` : ""}`;
+  if (url !== location.pathname + location.search) history.replaceState(null, "", url);
+}
+
+function readUrl() {
+  const query = new URLSearchParams(location.search);
+  const requested = parseInt(query.get("at"));
+  at = Number.isFinite(requested) ? Math.min(Math.max(requested, earliestTime()), latestTime()) : latestTime();
+  show = query.get("show") in STATES ? query.get("show") : "";
+  selected = query.get("task");
+}
+
+const allTimes = () => Object.values(images).flat().map(stamp);
+const earliestTime = () => Math.min(...allTimes());
+const latestTime = () => Math.max(...allTimes());
+
+// ---------- Rendering ----------
+
+function render() {
+  const areas = shelves();
+  const counts = { empty: 0, wrong: 0, low: 0, ok: 0 };
+  for (const a of areas) counts[a.state]++;
+  for (const state in counts) $(`count-${state}`).textContent = counts[state];
+  $("ok-hint").textContent = areas.length ? `${Math.round((100 * counts.ok) / areas.length)}% of ${areas.length} areas` : "";
+  for (const tile of document.querySelectorAll("[data-show]")) tile.setAttribute("aria-pressed", tile.dataset.show === show);
+
+  $("time").value = at;
+  $("time-label").textContent = clock(at);
+  $("now").hidden = at === latestTime();
+
+  // The list: tasks (or, when "Fine" is picked, the fine areas), worst first, longest-standing first.
+  const listed = areas
+    .filter((a) => (show ? a.state === show : a.state !== "ok"))
+    .sort((a, b) => STATES[a.state].rank - STATES[b.state].rank || a.since - b.since);
+  const open = listed.filter((a) => !done.has(a.key));
+  const finished = listed.filter((a) => done.has(a.key));
+
+  $("list-title").textContent = show ? STATES[show].title : "To do";
+  $("list-count").textContent = `${open.length} ${open.length === 1 ? "area" : "areas"}`;
+  $("tasks").replaceChildren(...open.map(taskCard));
+  if (!open.length) {
+    const empty = document.createElement("div");
+    empty.className = "empty-state";
+    empty.textContent = Object.keys(predictions).length
+      ? "Nothing to do here. The shelves look good."
+      : "No predictions yet. Run python -m shelf.predict, then reload.";
+    $("tasks").append(empty);
+  }
+  $("done-section").hidden = !finished.length;
+  $("done-summary").textContent = `${finished.length} marked done`;
+  $("done-tasks").replaceChildren(...finished.map(taskCard));
+
+  // Keep the selected task while it's in the list (or, during the timelapse, anywhere, so the photo stays put);
+  // otherwise pick the most urgent one.
+  if (!(playing ? areas : listed).some((a) => a.area.area_id === selected)) selected = open[0]?.area.area_id ?? listed[0]?.area.area_id ?? null;
+  renderDetail(areas.find((a) => a.area.area_id === selected), areas);
+  syncUrl();
+}
+
+function taskCard(a) {
+  const button = document.createElement("button");
+  button.className = `task tone-${a.state}${done.has(a.key) ? " done" : ""}`;
+  button.setAttribute("aria-current", a.area.area_id === selected);
+  const firstPhoto = stamp(images[a.camera][0]);
+  const since = a.since === firstPhoto ? `since ${clock(a.since)}` : `for ${duration(at - a.since)}`;
+  button.innerHTML = `
+    <img loading="lazy" alt="" src="/crop/${a.camera}/${stamp(a.file)}/${a.area.area_id}.jpg">
+    <div>
+      <div class="action">${STATES[a.state].action}</div>
+      <div class="product"></div>
+      <div class="where">Camera ${a.camera} · spot ${a.index + 1}</div>
+    </div>
+    <div class="since">${a.state === "ok" ? "" : since}</div>`;
+  button.querySelector(".product").textContent = a.area.product_name;
+  button.onclick = () => {
+    selected = a.area.area_id;
+    render();
+    if (matchMedia("(max-width: 1000px)").matches) $("detail").scrollIntoView({ behavior: "smooth" });
+  };
+  return button;
+}
+
+function renderDetail(a, areas) {
+  $("detail").hidden = !a;
+  if (!a) return;
+  $("detail").className = `detail tone-${a.state}`;
+  $("detail-action").textContent = STATES[a.state].action;
+  $("detail-product").textContent = a.area.product_name;
+  $("detail-where").textContent =
+    `Camera ${a.camera}, spot ${a.index + 1} of ${planogram[a.camera].length} · photo taken at ${clock(stamp(a.file))}`;
+
+  const isDone = done.has(a.key);
+  $("done-button").hidden = a.state === "ok";
+  $("done-button").textContent = isDone ? "Undo" : "Mark done";
+  $("done-button").className = `done-button${isDone ? " undo" : ""}`;
+  $("done-button").onclick = () => markDone(a.key, !isDone);
+  $("detail-note").innerHTML =
+    (a.state === "wrong" ? "This spot should hold the product above; something else is there. " : "") +
+    `Done tasks come back if the next photo still shows a problem. ` +
+    `<a href="/admin/compare/${a.camera}/${stamp(a.file)}/${a.area.area_id}` +
+    `${chosenPredictions === "latest" ? "" : `?predictions=${encodeURIComponent(chosenPredictions)}`}">Check this prediction</a>`;
+
+  photo = loadPhoto(a.camera, a.file);
+  if (!photo.complete) photo.onload = render;
+  if (photo.complete && photo.naturalWidth) drawPhoto(a, areas.filter((b) => b.camera === a.camera));
+}
+
+function drawPhoto(selectedArea, cameraAreas) {
+  canvas.width = photo.naturalWidth;
+  canvas.height = photo.naturalHeight;
+  context.drawImage(photo, 0, 0);
+  context.fillStyle = "rgba(0, 0, 0, 0.55)";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  const outline = (quad) => {
+    context.beginPath();
+    quad.forEach(([x, y], i) => (i ? context.lineTo(x, y) : context.moveTo(x, y)));
+    context.closePath();
+  };
+  const styles = getComputedStyle(document.documentElement);
+  for (const b of cameraAreas) {
+    // Redraw the photo inside each area so the shelves stand out from the faded store.
+    context.save();
+    outline(b.area.quad);
+    context.clip();
+    context.drawImage(photo, 0, 0);
+    context.restore();
+  }
+  for (const b of cameraAreas) {
+    const isSelected = b === selectedArea;
+    const tone = styles.getPropertyValue(`--${b.state}`).trim();
+    outline(b.area.quad);
+    context.fillStyle = tone + (isSelected ? "00" : "40");
+    context.fill();
+    context.lineWidth = isSelected ? 7 : 3;
+    context.strokeStyle = isSelected ? "#fff" : tone;
+    context.stroke();
+    if (isSelected) {
+      outline(b.area.quad);
+      context.lineWidth = 3;
+      context.strokeStyle = tone;
+      context.stroke();
+    }
+  }
+}
+
+function loadPhoto(camera, file) {
+  const src = `/image/${camera}/${file}`;
+  if (!photoCache.has(src)) {
+    const image = new Image();
+    image.src = src;
+    photoCache.set(src, image);
+  }
+  return photoCache.get(src);
+}
+
+// ---------- Timelapse ----------
+
+// Each timelapse frame moves the clock this far, so a whole day replays in about 20 seconds.
+const TIMELAPSE_STEP = 15 * 60;
+
+function stopPlaying() {
+  clearInterval(playing);
+  playing = null;
+  $("play").textContent = "▶ Play";
+}
+
+// Replay the day in steps of TIMELAPSE_STEP, from the first photo if already at the end.
+function play() {
+  if (at >= latestTime()) at = earliestTime();
+  const camera = Object.keys(planogram).find((c) => planogram[c].some((a) => a.area_id === selected));
+  for (const file of images[camera] ?? []) loadPhoto(camera, file);
+  playing = setInterval(() => {
+    if (at >= latestTime()) return stopPlaying();
+    at = Math.min(at + TIMELAPSE_STEP, latestTime());
+    render();
+  }, 350);
+  $("play").textContent = "❚❚ Pause";
+  render();
+}
+
+async function markDone(key, value) {
+  if (value) done.add(key);
+  else done.delete(key);
+  render();
+  await fetch("/api/done", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task: key, done: value }),
+  });
+}
+
+// ---------- Input ----------
+
+function pointInQuad([px, py], quad) {
+  let inside = false;
+  for (let i = 0, j = quad.length - 1; i < quad.length; j = i++) {
+    const [xi, yi] = quad[i];
+    const [xj, yj] = quad[j];
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+canvas.addEventListener("click", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  const point = [((event.clientX - rect.left) / rect.width) * canvas.width, ((event.clientY - rect.top) / rect.height) * canvas.height];
+  const camera = planogram[Object.keys(planogram).find((c) => planogram[c].some((a) => a.area_id === selected))];
+  const hit = camera?.find((a) => pointInQuad(point, a.quad));
+  if (hit) {
+    selected = hit.area_id;
+    render();
+  }
+});
+$("play").onclick = (event) => {
+  event.currentTarget.blur();
+  playing ? stopPlaying() : play();
+};
+document.addEventListener("keydown", (event) => {
+  if (event.key !== " " || event.target.tagName === "INPUT") return;
+  event.preventDefault();
+  playing ? stopPlaying() : play();
+});
+$("time").addEventListener("input", (event) => {
+  stopPlaying();
+  at = parseInt(event.target.value);
+  render();
+});
+$("now").onclick = () => {
+  stopPlaying();
+  at = latestTime();
+  render();
+};
+for (const tile of document.querySelectorAll("[data-show]")) {
+  tile.onclick = () => {
+    show = show === tile.dataset.show ? "" : tile.dataset.show;
+    render();
+  };
+}
+
+// ---------- Start ----------
+
+(async () => {
+  const state = await (await fetch(`/api/state?predictions=${encodeURIComponent(chosenPredictions)}`)).json();
+  fillPredictionsSelect(state);
+  planogram = state.planogram;
+  images = state.images;
+  predictions = state.predictions;
+  done = new Set(state.done);
+  $("time").min = earliestTime();
+  $("time").max = latestTime();
+  readUrl();
+  render();
+})();
+</script>
+</body>
+</html>

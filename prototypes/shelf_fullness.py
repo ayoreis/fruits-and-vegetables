@@ -1,13 +1,13 @@
 """
 Shelf fullness for a layout like:
-    data\areas\6386\1751017235\6386_1.jpg
-    data\areas\6386\1751017900\6386_1.jpg
-    data\areas\6385\1751016383\6385_1.jpg
+    output\areas\6386\1751017235\6386_1.jpg
+    output\areas\6386\1751017900\6386_1.jpg
+    output\areas\6385\1751016383\6385_1.jpg
 Each timestamp folder holds one <area>_1.jpg. Every area is scored on its own.
 
 Usage:
-    python shelf_fullness.py                 # all areas under data\areas
-    python shelf_fullness.py 6385 6386       # only these areas
+    python prototypes/shelf_fullness.py                 # all areas under output\areas
+    python prototypes/shelf_fullness.py 6385 6386       # only these areas
 """
 import csv
 import datetime as dt
@@ -19,11 +19,11 @@ import cv2
 import numpy as np
 
 # ---------------- settings ----------------
-DATA_ROOT = os.path.join("data", "areas")
+DATA_ROOT = os.path.join("output", "areas")
 IMAGE_SUFFIX = "_1.jpg"              # file is <area><suffix>, e.g. 6386_1.jpg
-OUT_DIR = "fullness_out"
+OUT_DIR = os.path.join("output", "shelf_fullness")
 
-# Optional: a known 100%-full image per area, e.g. {"6386": r"data\areas\6386\1751017235\6386_1.jpg"}
+# Optional: a known 100%-full image per area, e.g. {"6386": r"output\areas\6386\1751017235\6386_1.jpg"}
 # Areas not listed use their fullest-looking image as the 100% reference.
 REFERENCES = {}
 

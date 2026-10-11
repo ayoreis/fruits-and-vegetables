@@ -20,17 +20,19 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from joblib import Parallel, delayed
 from PIL import Image
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.svm import SVC
+from threadpoolctl import threadpool_limits
 
 from experiments.compare_classifiers import CLIP_MODELS, LEVELS, Clip, histogram_features, load_crops, product_logits
 from experiments.holdout import VALIDATION_AREAS, held_out_photos
-from planogram import load_cameras
-from predict import decide
-from score import POINTS, STOCK_VALUES, identification_case, stock_case
+from shelf.planogram import load_cameras
+from shelf.decisions import decide
+from shelf.score import POINTS, STOCK_VALUES, identification_case, stock_case
 
 CACHE = Path("output/experiments")
 PAD_COLOUR = (124, 116, 104)  # roughly CLIP's mean pixel, so padding looks neutral
@@ -110,8 +112,11 @@ def cached_embeddings(name, keys, crops, embed):
 def fit_logistic(train_features, train_targets, test_features, classes, regularisation=1.0):
     probabilities = np.zeros((len(test_features), len(classes)))
     model = make_pipeline(StandardScaler(), LogisticRegression(C=regularisation, max_iter=5000))
-    model.fit(train_features, train_targets)
-    probabilities[:, [classes.index(c) for c in model.classes_]] = model.predict_proba(test_features)
+    # One thread per fit: these models are small enough that more threads slow them down (rounds run in parallel
+    # instead). A `with` block rather than a decorator, which can't be sent to the worker processes.
+    with threadpool_limits(limits=1):
+        model.fit(train_features, train_targets)
+        probabilities[:, [classes.index(c) for c in model.classes_]] = model.predict_proba(test_features)
     return probabilities
 
 
@@ -221,8 +226,9 @@ def svm(features):
     def run(targets, train, test):
         probabilities = np.zeros((len(test), len(LEVELS)))
         model = make_pipeline(StandardScaler(), SVC(C=1.0, probability=True, random_state=0))
-        model.fit(features[train], targets[train])
-        probabilities[:, [LEVELS.index(c) for c in model.classes_]] = model.predict_proba(features[test])
+        with threadpool_limits(limits=1):
+            model.fit(features[train], targets[train])
+            probabilities[:, [LEVELS.index(c) for c in model.classes_]] = model.predict_proba(features[test])
         return probabilities
 
     return run
@@ -261,7 +267,7 @@ def stock_points(probabilities, labels):
 def compliance_points(compliant_probabilities, labels):
     uniform = {level: 1 / 3 for level in LEVELS}
     cases = Counter(
-        identification_case(decide(p, uniform)["planogram_compliant"], label["planogram_compliant"])
+        identification_case(decide(p, uniform, empty_is_compliant=False)["planogram_compliant"], label["planogram_compliant"])
         for p, label in zip(compliant_probabilities, labels)
     )
     return sum(POINTS[case] * count for case, count in cases.items()), cases["identification_correct"]
@@ -285,6 +291,7 @@ def main():
     parser.add_argument("--annotations", type=Path, default=Path("input/annotations.json"))
     parser.add_argument("--min-photos", type=int, default=3, help="leave out cameras with fewer labelled photos")
     parser.add_argument("--rounds", type=int, default=10)
+    parser.add_argument("--jobs", type=int, default=-1, help="rounds to run side by side (-1 = all cores)")
     parser.add_argument("--large", action="store_true", help="also try CLIP ViT-L/14 (about 20x slower)")
     parser.add_argument("--quick", action="store_true", help="only the stock approaches that did best so far")
     parser.add_argument("--only", nargs="*", help="only run approaches whose name contains one of these")
@@ -413,20 +420,28 @@ def main():
           f"over {args.rounds} held-out rounds…")
     results = {name: [] for name in approaches}
     compliance_results = {name: [] for name in compliance_approaches}
-    for round_number in range(args.rounds):
+    def run_round(round_number):
         test_photos = held_out_photos(annotations, random.Random(round_number))
         test = np.array([i for i, (camera, file, _) in enumerate(keys) if (camera, file) in test_photos])
         train = np.setdiff1d(np.arange(len(keys)), test)
         test_labels = [labels[i] for i in test]
-
+        compliance_round = {}
         for name, approach in compliance_approaches.items():
-            compliant = approach(compliance_targets, train, test)[:, 1]
-            points, correct = compliance_points(compliant, test_labels)
-            compliance_results[name].append((points, correct, len(test)))
-
+            points, correct = compliance_points(approach(compliance_targets, train, test)[:, 1], test_labels)
+            compliance_round[name] = (points, correct, len(test))
+        stock_round = {}
         for name, approach in approaches.items():
             points, correct = stock_points(approach(stock_targets, train, test), test_labels)
-            results[name].append((points, correct, len(test)))
+            stock_round[name] = (points, correct, len(test))
+        return compliance_round, stock_round
+
+    for compliance_round, stock_round in Parallel(n_jobs=args.jobs)(
+        delayed(run_round)(number) for number in range(args.rounds)
+    ):
+        for name, result in compliance_round.items():
+            compliance_results[name].append(result)
+        for name, result in stock_round.items():
+            results[name].append(result)
 
     best_compliance = max(
         np.mean([VALIDATION_AREAS * p / n for p, _, n in rounds]) for rounds in compliance_results.values()

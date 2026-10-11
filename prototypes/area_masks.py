@@ -8,7 +8,7 @@ from pathlib import Path
 
 plano = None
 
-base_dir = Path(__file__).resolve().parent
+base_dir = Path(__file__).resolve().parent.parent
 
 with open(base_dir / "input" / "planogram.json") as file:
     d = json.load(file)
@@ -21,7 +21,7 @@ camname = "6462"
 # print([i["image_coordinates"] for i in plano["Frutas e Legumes"]["cameras"][camname]["products"]])
 
 image_path = base_dir / "input" / "cameras" / camname / f"{name}.jpg"
-output_dir = base_dir / "output" / "colorthing"
+output_dir = base_dir / "output" / "area_masks"
 output_dir.mkdir(parents=True, exist_ok=True)
 
 image = cv2.imread(str(image_path))

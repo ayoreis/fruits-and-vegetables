@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image, ImageColor, ImageDraw, ImageFont
 
-from planogram import area_quad, load_cameras
+from shelf.planogram import area_quad, load_cameras
 
 COLORS = list(ImageColor.colormap)
 

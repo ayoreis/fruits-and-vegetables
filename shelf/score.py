@@ -64,6 +64,21 @@ def points(counts):
     return sum(POINTS[case] * counts[case] for case in POINTS)
 
 
+def summary(counts):
+    """Points as a share of the maximum, and how many answers were right, overall and per part."""
+    areas = counts["identification_correct"] + counts["identification_wrong"]
+    if not areas:
+        return "no annotated areas"
+    total = points(counts)
+    identification = counts["identification_correct"] / areas
+    stock = counts["stock_correct"] / areas
+    return (
+        f"{total:+} / {2 * areas} points ({total / (2 * areas):.1%} of maximum) · "
+        f"{(identification + stock) / 2:.1%} correct "
+        f"(identification {identification:.1%}, stock level {stock:.1%})"
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("predictions", type=Path, nargs="?", default=Path("output/annotations.json"))
@@ -81,15 +96,14 @@ def main():
     for case, label in LABELS.items():
         print(f"{label:<34}{total[case]:>7}{POINTS[case]:>+7}{POINTS[case] * total[case]:>+8}")
     print(f"{'Total':<48}{points(total):>+8}")
-    print(f"\n{points(total)} points out of a maximum of {2 * areas} over {areas} areas")
+    print(f"\nOver {areas} areas: {summary(total)}")
     if total["missing"]:
         print(f"{total['missing']} annotated areas were missing from the predictions")
 
     if args.by_camera:
         print()
         for camera in sorted(cases):
-            camera_areas = cases[camera]["identification_correct"] + cases[camera]["identification_wrong"]
-            print(f"Camera {camera}: {points(cases[camera]):+} / {2 * camera_areas}")
+            print(f"Camera {camera}: {summary(cases[camera])}")
 
 
 if __name__ == "__main__":

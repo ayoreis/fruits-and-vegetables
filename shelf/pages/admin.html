@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shelf Annotator</title>
+<title>Shelf Admin</title>
 <style>
   :root {
     --bg: #f6f6f3;
@@ -64,6 +64,13 @@
   .views a:hover { color: var(--text); }
   .views a[aria-current="page"] { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
   .summary { flex: 1; color: var(--muted); }
+  .model-picker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; white-space: nowrap; }
+  .model-picker select {
+    padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel); color: var(--text); font: inherit;
+  }
+  .page-link { color: var(--muted); text-decoration: none; white-space: nowrap; }
+  .page-link:hover { color: var(--text); text-decoration: underline; }
   .summary strong { color: var(--text); }
   #save-status.error { color: var(--bad); }
 
@@ -95,7 +102,14 @@
   nav .count.done { color: var(--ok); }
 
   .viewer { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
-  .viewer > p { margin: 0; color: var(--muted); }
+  .photo-bar { display: flex; align-items: center; gap: 12px; }
+  .photo-bar p { margin: 0; color: var(--muted); }
+  .photo-bar button {
+    padding: 3px 10px; border: 1px solid var(--border); border-radius: 4px;
+    background: var(--panel); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap;
+  }
+  .photo-bar button:hover { border-color: var(--muted); }
+  .photo-bar input { flex: 1; max-width: 360px; accent-color: var(--accent); }
   /* Leave room for the header, title and annotation panel so the panel stays on screen. */
   canvas {
     display: block; margin: 0 auto; max-width: 100%; max-height: calc(100vh - 400px); min-height: 200px;
@@ -164,10 +178,10 @@
 </head>
 <body>
 <header>
-  <h1>Shelf Annotator</h1>
+  <h1>Shelf Admin</h1>
   <div class="views" aria-label="View">
-    <a href="/annotate" data-view="annotate">Annotate</a>
-    <a href="/compare" data-view="compare">Compare</a>
+    <a href="/admin/annotate" data-view="annotate">Annotate</a>
+    <a href="/admin/compare" data-view="compare">Compare</a>
   </div>
   <p class="summary" id="summary" hidden></p>
   <div class="progress" id="progress">
@@ -175,6 +189,8 @@
     <span id="progress-text"></span>
   </div>
   <span id="save-status"></span>
+  <label class="model-picker" id="model-picker">Model <select id="predictions-select"></select></label>
+  <a class="page-link" href="/staff">Staff view →</a>
 </header>
 
 <main>
@@ -226,7 +242,11 @@
   </nav>
 
   <section class="viewer">
-    <p id="image-title"></p>
+    <div class="photo-bar">
+      <p id="image-title"></p>
+      <button id="timelapse" title="Step through this camera's photos across the day (Space)"></button>
+      <input id="timelapse-scrub" type="range" min="0" step="1" aria-label="Photo of this camera">
+    </div>
     <canvas id="canvas"></canvas>
 
     <div class="annotate">
@@ -473,6 +493,18 @@ function clearCamera() {
 
 // ---------- Navigation ----------
 
+// Photos are cached so the timelapse and going back and forth don't reload them.
+const photoCache = new Map();
+function loadPhoto(camera, file) {
+  const src = `/image/${camera}/${file}`;
+  if (!photoCache.has(src)) {
+    const image = new Image();
+    image.src = src;
+    photoCache.set(src, image);
+  }
+  return photoCache.get(src);
+}
+
 function selectImage(index, area = 0) {
   const changed = index !== imageIndex || !photo.src;
   imageIndex = Math.max(0, Math.min(queue.length - 1, index));
@@ -480,11 +512,46 @@ function selectImage(index, area = 0) {
   pendingCompliant = true;
   if (changed) {
     const { camera, file } = current();
-    photo = new Image();
-    photo.onload = render;
-    photo.src = `/image/${camera}/${file}`;
+    photo = loadPhoto(camera, file);
+    if (!photo.complete) photo.onload = render;
   }
   render();
+}
+
+// ---------- Timelapse ----------
+
+// The current camera's photos (queue indices), in time order.
+const cameraPhotos = () => queue.flatMap((item, i) => (item.camera === current().camera ? [i] : []));
+let timelapseTimer = null;
+
+function stopTimelapse() {
+  clearInterval(timelapseTimer);
+  timelapseTimer = null;
+  renderTimelapse();
+}
+
+// Step through the camera's photos, keeping the same area selected, from the start if at the last photo.
+function playTimelapse() {
+  const photos = cameraPhotos();
+  for (const i of photos) loadPhoto(queue[i].camera, queue[i].file);
+  if (photos.indexOf(imageIndex) === photos.length - 1) selectImage(photos[0], areaIndex);
+  timelapseTimer = setInterval(() => {
+    // Recomputed each step, so picking another camera mid-play carries on with that camera.
+    const current = cameraPhotos();
+    const place = current.indexOf(imageIndex);
+    if (place >= current.length - 1) return stopTimelapse();
+    selectImage(current[place + 1], areaIndex);
+  }, 700);
+  renderTimelapse();
+}
+
+const toggleTimelapse = () => (timelapseTimer ? stopTimelapse() : playTimelapse());
+
+function renderTimelapse() {
+  const photos = cameraPhotos();
+  $("timelapse").textContent = timelapseTimer ? "❚❚ Pause" : "▶ Play";
+  $("timelapse-scrub").max = photos.length - 1;
+  $("timelapse-scrub").value = photos.indexOf(imageIndex);
 }
 
 function selectArea(index) {
@@ -536,12 +603,30 @@ function applyFilters() {
 
 // ---------- URL ----------
 
-// The current view, photo, area and filters as a path, e.g. /compare/6215/1751001268/6215_2?stock=full
+// The current view, photo, area and filters as a path, e.g. /admin/compare/6215/1751001268/6215_2?stock=full
+// Which saved predictions to show ("latest" = output/annotations.json); kept in the URL as ?predictions=.
+const chosenPredictions = new URLSearchParams(location.search).get("predictions") || "latest";
+
+function fillPredictionsSelect(state) {
+  const select = $("predictions-select");
+  for (const name of state.predictionOptions) {
+    select.add(new Option(name === "latest" ? "Latest run" : name, name));
+  }
+  select.value = state.predictionsName;
+  select.onchange = () => {
+    const url = new URL(location.href);
+    if (select.value === "latest") url.searchParams.delete("predictions");
+    else url.searchParams.set("predictions", select.value);
+    location.assign(url);
+  };
+}
+
 function currentUrl() {
   const { camera, file } = current();
-  const path = `/${view}/${camera}/${file.replace(".jpg", "")}/${area().area_id}`;
-  const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString();
-  return query ? `${path}?${query}` : path;
+  const path = `/admin/${view}/${camera}/${file.replace(".jpg", "")}/${area().area_id}`;
+  const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+  if (chosenPredictions !== "latest") query.set("predictions", chosenPredictions);
+  return query.size ? `${path}?${query}` : path;
 }
 
 function syncUrl() {
@@ -551,7 +636,7 @@ function syncUrl() {
 
 // Restore the view, filters, photo and area from the URL; false when it names no known photo.
 function readUrl() {
-  const [, viewPart, camera, stem, areaId] = location.pathname.split("/");
+  const [, , viewPart, camera, stem, areaId] = location.pathname.split("/");
   view = viewPart === "compare" ? "compare" : "annotate";
   const query = new URLSearchParams(location.search);
   for (const name of FILTERS) {
@@ -617,6 +702,7 @@ function render() {
   renderPhoto();
   renderPanel();
   renderHeader();
+  renderTimelapse();
   syncUrl();
 }
 
@@ -624,6 +710,7 @@ const signed = (points) => (points > 0 ? `+${points}` : `${points}`);
 const percent = (part, whole) => `${Math.round((100 * part) / whole)}%`;
 
 function renderHeader() {
+  $("model-picker").hidden = view !== "compare";
   for (const link of document.querySelectorAll("[data-view]")) {
     if (link.dataset.view === view) link.setAttribute("aria-current", "page");
     else link.removeAttribute("aria-current");
@@ -657,7 +744,7 @@ function renderHeader() {
     }
   }
   $("summary").innerHTML = !Object.keys(predictions).length
-    ? `No predictions in ${predictionsFile}. Run <code>python predict.py --out-of-fold</code>, then reload.`
+    ? `No predictions in ${predictionsFile}. Run <code>python -m shelf.predict --out-of-fold</code>, then reload.`
     : `Predictions in ${predictionsFile}: <strong>${signed(points)} / ${2 * areas}</strong>
        (${percent(points, 2 * areas)}) on ${areas} annotated areas · stock ${percent(stockRight, areas)} right ·
        compliance ${percent(complianceRight, areas)} right` + (missing ? ` · ${missing} not predicted` : "");
@@ -891,12 +978,29 @@ window.addEventListener("popstate", () => {
 $("previous").onclick = previousArea;
 $("next").onclick = nextArea;
 $("clear").onclick = clearArea;
+$("timelapse").onclick = (event) => {
+  event.currentTarget.blur();
+  toggleTimelapse();
+};
+$("timelapse-scrub").addEventListener("input", (event) => {
+  const target = cameraPhotos()[event.target.value];  // read before stopping, which resets the slider
+  stopTimelapse();
+  selectImage(target, areaIndex);
+});
+$("timelapse-scrub").addEventListener("change", (event) => event.target.blur());
 $("clear-photo").onclick = clearPhoto;
 $("clear-camera").onclick = clearCamera;
 
 document.addEventListener("keydown", (event) => {
-  if (event.ctrlKey || event.metaKey || event.altKey || event.target.tagName === "SELECT") return;
+  if (event.ctrlKey || event.metaKey || event.altKey || ["SELECT", "INPUT"].includes(event.target.tagName)) return;
   const key = event.key.toLowerCase();
+  // Space plays or pauses the timelapse; any other key stops it and does its usual job.
+  if (key === " ") {
+    toggleTimelapse();
+    event.preventDefault();
+    return;
+  }
+  if (timelapseTimer) stopTimelapse();
   if (STOCK_KEYS[key]) setStock(STOCK_KEYS[key]);
   else if (key === "c") setCompliance(true);
   else if (key === "w") setCompliance(false);
@@ -912,7 +1016,8 @@ document.addEventListener("keydown", (event) => {
 // ---------- Start ----------
 
 (async () => {
-  const state = await (await fetch("/api/state")).json();
+  const state = await (await fetch(`/api/state?predictions=${encodeURIComponent(chosenPredictions)}`)).json();
+  fillPredictionsSelect(state);
   planogram = state.planogram;
   annotations = state.annotations;
   predictions = state.predictions;

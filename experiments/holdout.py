@@ -21,9 +21,9 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 from experiments.compare_classifiers import CLIP_MODELS, LEVELS, Clip, histogram_features, load_crops, product_logits
-from planogram import load_cameras
-from predict import decide
-from score import points, score
+from shelf.planogram import load_cameras
+from shelf.decisions import decide
+from shelf.score import points, score
 
 VALIDATION_AREAS = 289
 

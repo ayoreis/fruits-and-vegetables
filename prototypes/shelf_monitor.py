@@ -2,8 +2,8 @@ r"""
 Shelf monitoring for the "Fresh eyes on fresh produce" challenge.
 
 Input layout (one crop per planogram area, named after its area_id):
-    data\areas\<camera>\<timestamp>\<area_id>.jpg      e.g. data\areas\6386\1751017235\6386_1.jpg
-plus planogram.json.
+    output\areas\<camera>\<timestamp>\<area_id>.jpg    e.g. output\areas\6386\1751017235\6386_1.jpg
+plus input\planogram.json. Writes into output\shelf_monitor\.
 
 Output: submission.json in exactly the annotation format of the challenge:
     { "<camera>": { "<timestamp>.jpg": { "<area_id>": {
@@ -11,9 +11,9 @@ Output: submission.json in exactly the annotation format of the challenge:
 and diagnostics.csv + overlay images to check what the code saw.
 
 Usage:
-    python shelf_monitor.py
-    python shelf_monitor.py --cameras 6385 6386
-    python shelf_monitor.py --areas 6386_1            # only analyse (and output) these areas
+    python prototypes/shelf_monitor.py
+    python prototypes/shelf_monitor.py --cameras 6385 6386
+    python prototypes/shelf_monitor.py --areas 6386_1            # only analyse (and output) these areas
 """
 import argparse
 import base64
@@ -287,9 +287,9 @@ def write_report(recs, out_dir):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--data", default=os.path.join("data", "areas"))
-    ap.add_argument("--planogram", default="planogram.json")
-    ap.add_argument("--out", default="output")
+    ap.add_argument("--data", default=os.path.join("output", "areas"))
+    ap.add_argument("--planogram", default=os.path.join("input", "planogram.json"))
+    ap.add_argument("--out", default=os.path.join("output", "shelf_monitor"))
     ap.add_argument("--cameras", nargs="*", help="camera ids (default: all folders under --data)")
     ap.add_argument("--areas", nargs="*", help="only these area ids, e.g. 6386_1")
     ap.add_argument("--no-open", action="store_true", help="do not open report.html in the browser at the end")

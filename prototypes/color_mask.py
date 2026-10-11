@@ -2,9 +2,9 @@ import cv2
 import numpy as np
 from pathlib import Path
 
-base_dir = Path(__file__).resolve().parent
-image_path = base_dir / "data" / "areas" / "6385" / "1751001178" / "6385_1.jpg"
-output_dir = base_dir / "output"
+base_dir = Path(__file__).resolve().parent.parent
+image_path = base_dir / "output" / "areas" / "6385" / "1751001178" / "6385_1.jpg"
+output_dir = base_dir / "output" / "color_mask"
 output_dir.mkdir(parents=True, exist_ok=True)
 
 image = cv2.imread(str(image_path))
