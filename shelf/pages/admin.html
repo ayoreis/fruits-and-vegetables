@@ -399,6 +399,7 @@
         photo lands in <em>input/uploads/&lt;camera&gt;/</em>, apart from the training photos.
         Photos picked without a camera folder go to the <em>loose files</em> camera.
         Pick again to add more folders. Existing files are never overwritten.</p>
+      <p class="note" id="uploads-info"></p>
       <div id="upload-status" aria-live="polite"></div>
     </div>
     <div class="run-panel">
@@ -534,7 +535,7 @@ let filters = { status: "", stock: "", compliance: "", camera: "", agreement: ""
 let order = [];
 let rank = [];
 
-const $ = (id) => document.getElementById(id);
+const $ = (id) => document.getElementById(id) ?? (() => { throw new Error(`missing element #${id}`); })();
 const canvas = $("canvas");
 const context = canvas.getContext("2d");
 
