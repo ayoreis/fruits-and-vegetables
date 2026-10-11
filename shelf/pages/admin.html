@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shelf Admin</title>
+<title>Shock Admin</title>
 <style>
   :root {
     --bg: #f6f6f3;
@@ -211,7 +211,9 @@
   .run-view p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
   .run-panel { max-width: 760px; }
   #run-form { display: grid; grid-template-columns: 150px minmax(0, 520px); gap: 8px 12px; align-content: start; align-items: center; }
-  #run-form input[type="number"], #run-form input[type="text"], #run-form select {
+  #upload-form { display: grid; grid-template-columns: 150px minmax(0, 520px); gap: 8px 12px; align-content: start; align-items: center; }
+  #run-form input[type="number"], #run-form input[type="text"], #run-form select,
+  #upload-form input[type="file"], #upload-form select {
     width: 100%; padding: 5px 6px; border: 1px solid var(--border); border-radius: 4px;
     background: var(--panel); color: var(--text); font: inherit; font-size: 13px;
   }
@@ -221,7 +223,15 @@
     padding: 8px 18px; border: 0; border-radius: 6px; cursor: pointer;
     background: var(--text); color: var(--pressed-text); font: inherit; font-weight: 600;
   }
+  #upload-submit {
+    padding: 8px 18px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--text); color: var(--pressed-text); font: inherit; font-weight: 600;
+  }
   #run-submit:hover { opacity: .85; }
+  #upload-submit:hover { opacity: .85; }
+  #upload-status { margin-top: 8px; font-size: 13px; }
+  #upload-status .ok { color: var(--ok); }
+  #upload-status .bad { color: var(--bad); }
   #run-error { color: var(--bad); }
   .pill { padding: 1px 8px; border-radius: 9px; font-size: 11px; font-weight: 600; }
   .pill.running { background: var(--accent); color: #111; }
@@ -234,7 +244,7 @@
 </head>
 <body>
 <header>
-  <h1>Shelf Admin</h1>
+  <h1>Shock Admin</h1>
   <div class="views" aria-label="View">
     <a href="/admin/annotate" data-view="annotate">Annotate</a>
     <a href="/admin/compare" data-view="compare">Compare</a>
@@ -365,6 +375,23 @@
   <section class="run-view" id="run-view" hidden>
     <div class="stats-view" id="run-result"></div>
     <div class="run-panel">
+      <h2>Upload images</h2>
+      <form id="upload-form">
+        <span class="group-label" id="upload-camera-label">Camera</span>
+        <div><select id="upload-camera" aria-labelledby="upload-camera-label"></select></div>
+
+        <span class="group-label" id="upload-files-label">Photos</span>
+        <div><input id="upload-files" type="file" accept="image/jpeg,.jpg" multiple aria-labelledby="upload-files-label"></div>
+
+        <span></span>
+        <div><button id="upload-submit" type="submit">Upload</button></div>
+      </form>
+      <p class="note">JPG photos land in <em>input/uploads/&lt;camera&gt;/</em>, apart from the
+        training photos — run with <em>Photos: Uploaded</em> for the final run.
+        Existing files are never overwritten.</p>
+      <div id="upload-status" aria-live="polite"></div>
+    </div>
+    <div class="run-panel">
       <h2>New run</h2>
       <form id="run-form">
         <span class="group-label">Mode</span>
@@ -372,6 +399,12 @@
           <label><input type="radio" name="run-mode" value="predict" checked> Predict</label>
           <label><input type="radio" name="run-mode" value="out-of-fold"> Out-of-fold</label>
           <label><input type="radio" name="run-mode" value="evaluate"> Evaluate</label>
+        </div>
+
+        <span class="group-label only-predict" id="run-photos-label">Photos</span>
+        <div class="choices two only-predict" role="group" aria-labelledby="run-photos-label">
+          <label><input type="radio" name="run-photos" value="training" checked> Training</label>
+          <label><input type="radio" name="run-photos" value="uploaded"> Uploaded</label>
         </div>
 
         <span class="group-label" id="run-model-label">Model</span>
@@ -451,6 +484,7 @@ const DOCUMENT_EXAMPLES = {
 };
 
 let planogram, annotations;
+let biases = {};
 let predictions = {};
 let predictionsFile = "";
 let models = [];
@@ -876,6 +910,48 @@ function ordered() {
 }
 
 let saveTimer;
+let biasTimer;
+function saveBiases() {
+  const status = $("save-status");
+  status.textContent = "Saving…";
+  status.className = "";
+  clearTimeout(biasTimer);
+  biasTimer = setTimeout(async () => {
+    try {
+      const response = await fetch("/api/biases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(biases),
+      });
+      if (!response.ok) throw new Error(response.statusText);
+      status.textContent = "Saved";
+    } catch (error) {
+      status.textContent = "Save failed";
+      status.className = "error";
+    }
+  }, 300);
+}
+
+const currentBias = () => biases[current().camera]?.[area().area_id] ?? 0;
+
+function setBias(value) {
+  const { camera } = current();
+  const id = area().area_id;
+  value = Math.round(value * 10) / 10;
+  biases[camera] ??= {};
+  if (value) biases[camera][id] = value;
+  else {
+    delete biases[camera][id];
+    if (!Object.keys(biases[camera]).length) delete biases[camera];
+  }
+  saveBiases();
+  render();
+}
+
+function renderBias() {
+  const value = currentBias();
+  $("bias-value").textContent = value > 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
+}
 function save() {
   const status = $("save-status");
   status.textContent = "Saving…";
@@ -1420,6 +1496,7 @@ function renderPanel() {
   for (const button of document.querySelectorAll("[data-stock]")) {
     button.setAttribute("aria-pressed", value?.stock_level === button.dataset.stock);
   }
+  renderBias();
 }
 
 function renderComparison() {
@@ -1502,6 +1579,8 @@ window.addEventListener("popstate", () => {
 $("previous").onclick = previousArea;
 $("next").onclick = nextArea;
 $("clear").onclick = clearArea;
+$("bias-down").onclick = () => setBias(currentBias() - 0.1);
+$("bias-up").onclick = () => setBias(currentBias() + 0.1);
 $("timelapse").onclick = (event) => {
   event.currentTarget.blur();
   toggleTimelapse();
@@ -1528,6 +1607,8 @@ document.addEventListener("keydown", (event) => {
   if (STOCK_KEYS[key]) setStock(STOCK_KEYS[key]);
   else if (key === "c") setCompliance(true);
   else if (key === "w") setCompliance(false);
+  else if (key === "[") setBias(currentBias() - 0.1);
+  else if (key === "]") setBias(currentBias() + 0.1);
   else if (key === "arrowright") nextArea();
   else if (key === "arrowleft") previousArea();
   else if (key === "arrowdown") stepImage(1);
@@ -1589,6 +1670,7 @@ async function submitRun(event) {
   const mode = runMode();
   const body = {
     mode,
+    photos: document.querySelector('input[name="run-photos"]:checked').value,
     models: mode === "evaluate"
       ? [...document.querySelectorAll('input[name="run-models"]:checked')].map((box) => box.value)
       : [$("run-model").value],
@@ -1622,6 +1704,47 @@ async function submitRun(event) {
   await refreshRuns();
 }
 
+async function uploadImages(event) {
+  event.preventDefault();
+  const status = $("upload-status");
+  status.replaceChildren();
+  const camera = $("upload-camera").value;
+  const files = [...$("upload-files").files];
+  const note = (text, tone) => {
+    const row = document.createElement("div");
+    row.textContent = text;
+    if (tone) row.className = tone;
+    status.append(row);
+  };
+  if (!camera) {
+    note("Pick a camera first.", "bad");
+    return;
+  }
+  if (!files.length) {
+    note("Pick one or more JPG photos first.", "bad");
+    return;
+  }
+  let saved = 0;
+  for (const file of files) {
+    try {
+      const response = await fetch(
+        `/api/upload?camera=${encodeURIComponent(camera)}&name=${encodeURIComponent(file.name)}`,
+        { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: file },
+      );
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error ?? `refused (${response.status})`);
+      note(`✓ ${file.name}`, "ok");
+      saved++;
+    } catch (error) {
+      note(`✗ ${file.name}: ${error.message}`, "bad");
+    }
+  }
+  if (saved) {
+    await refreshState();
+    render();
+  }
+}
+
 function buildCameraOptions(images) {
   const select = $("filter-camera");
   const kept = select.value;
@@ -1629,6 +1752,10 @@ function buildCameraOptions(images) {
   for (const camera of Object.keys(images)) select.add(new Option(camera, camera));
   select.value = kept in images ? kept : "";
   filters.camera = select.value;
+  const upload = $("upload-camera");
+  const keptUpload = upload.value;
+  upload.replaceChildren(...Object.keys(images).map((camera) => new Option(camera, camera)));
+  if (keptUpload in images) upload.value = keptUpload;
 }
 
 function buildModelControls() {
@@ -1659,6 +1786,7 @@ async function refreshState() {
   fillPredictionsSelect(state);
   planogram = state.planogram;
   annotations = state.annotations;
+  biases = state.biases || {};
   predictions = state.predictions;
   predictionsFile = state.predictionsFile;
   models = state.models;
@@ -1673,6 +1801,7 @@ for (const radio of document.querySelectorAll('input[name="run-mode"]')) {
   radio.addEventListener("change", syncRunForm);
 }
 $("run-form").addEventListener("submit", submitRun);
+$("upload-form").addEventListener("submit", uploadImages);
 
 (async () => {
   await refreshState();

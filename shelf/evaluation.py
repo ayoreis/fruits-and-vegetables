@@ -63,14 +63,21 @@ def fit_and_predict(model_name, features, labels, test):
     return model.predict(subset(features, test))
 
 
-def score_round(model_name, features, keys, labels, test, biases):
+def area_bias(area_biases, key):
+    """A planogram area's own lower bias; areas without one count as zero."""
+    return area_biases.get((key[0], key[2]), 0.0)
+
+
+def score_round(model_name, features, keys, labels, test, biases, area_biases=None):
     """The round's score for each lower bias, scaled to the validation set's size, and the share of answers right."""
+    area_biases = area_biases or {}
     probabilities = fit_and_predict(model_name, features, labels, test)
     test_keys = [key for key, t in zip(keys, test) if t]
     truth = nested(test_keys, [l for l, t in zip(labels, test) if t])
     results = {}
     for bias in biases:
-        counts = sum(score(nested(test_keys, [decide(*p, bias) for p in probabilities]), truth).values(), Counter())
+        answers = [decide(*p, bias + area_bias(area_biases, key)) for p, key in zip(probabilities, test_keys)]
+        counts = sum(score(nested(test_keys, answers), truth).values(), Counter())
         correct = (counts["identification_correct"] + counts["stock_correct"]) / (2 * len(test_keys))
         results[bias] = (VALIDATION_AREAS * points(counts) / len(test_keys), correct)
     return results
@@ -80,13 +87,14 @@ def jobs_label(jobs):
     return "all cores" if jobs == -1 else f"{jobs} process{'es' if jobs != 1 else ''}"
 
 
-def evaluate(model_names, features, keys, labels, rounds=20, biases=(0.0,), split="photos", jobs=-1):
+def evaluate(model_names, features, keys, labels, rounds=20, biases=(0.0,), split="photos", jobs=-1,
+             area_biases=None):
     """Print each model's estimated validation score, for each lower bias."""
     masks = hidden_photo_masks(keys, rounds) if split == "photos" else hidden_camera_masks(keys)
     tasks = [(name, mask) for name in model_names for mask in masks]
     print(f"Scoring {len(model_names)} model(s) on {len(masks)} {split} splits, on {jobs_label(jobs)}…")
     outcomes = Parallel(n_jobs=jobs)(
-        delayed(score_round)(name, features, keys, labels, mask, biases) for name, mask in tasks
+        delayed(score_round)(name, features, keys, labels, mask, biases, area_biases) for name, mask in tasks
     )
 
     maximum = 2 * VALIDATION_AREAS
@@ -104,11 +112,12 @@ def evaluate(model_names, features, keys, labels, rounds=20, biases=(0.0,), spli
         print(f"{name:<{width}}" + "".join(f"{cell:>26}" for cell in cells) + f"   {correct:.1%} answers right (bias {biases[0]})")
 
 
-def out_of_fold(model_name, features, keys, labels, folds=10, lower_bias=0.0, jobs=-1):
+def out_of_fold(model_name, features, keys, labels, folds=10, lower_bias=0.0, jobs=-1, area_biases=None):
     """Answers for every labelled area from a model that didn't see its photo's labels.
 
     Each camera's photos are dealt round-robin into the folds, so every fold has every camera.
     """
+    area_biases = area_biases or {}
     fold_of = {}
     for camera, files in photos_by_camera(keys).items():
         shuffled = sorted(files)
@@ -120,7 +129,8 @@ def out_of_fold(model_name, features, keys, labels, folds=10, lower_bias=0.0, jo
         test = fold == number
         probabilities = fit_and_predict(model_name, features, labels, test)
         test_keys = [key for key, t in zip(keys, test) if t]
-        return list(zip(test_keys, (decide(*p, lower_bias) for p in probabilities)))
+        answers = (decide(*p, lower_bias + area_bias(area_biases, key)) for p, key in zip(probabilities, test_keys))
+        return list(zip(test_keys, answers))
 
     print(f"Predicting {folds} folds on {jobs_label(jobs)}…")
     answers = {}

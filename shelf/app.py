@@ -51,6 +51,8 @@ running_run = [None]
 MAX_RUN_LOG = 100_000
 MAX_RUNS = 20
 DEVICES = ("auto", "cpu", "cuda", "mps")
+UPLOAD_NAME = re.compile(r"^[\w][\w.\-]{0,100}\.jpg$")
+MAX_UPLOAD = 50 * 1024 * 1024
 
 
 def run_worker(job_id, command, runs_file, versioned_stem):
@@ -166,8 +168,11 @@ class Handler(SimpleHTTPRequestHandler):
         os.replace(temporary, path)
 
     def image_path(self, camera, timestamp):
-        path = self.options.cameras / camera / f"{timestamp}.jpg"
-        return path if camera in self.planogram and path.is_file() else None
+        for base in (self.options.cameras, self.options.uploads):
+            path = Path(base) / camera / f"{timestamp}.jpg"
+            if camera in self.planogram and path.is_file():
+                return path
+        return None
 
     def do_GET(self):
         url = urlsplit(self.path)
@@ -217,6 +222,8 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_POST(self):
         length = int(self.headers.get("Content-Length") or 0)
+        if self.path.startswith("/api/upload"):
+            return self.upload(length)
         body = json.loads(self.rfile.read(length)) if length else {}
         if self.path == "/api/annotations":
             self.write_json(self.options.output, body)
@@ -227,6 +234,16 @@ class Handler(SimpleHTTPRequestHandler):
                 done = self.read_done()
                 (done.add if body["done"] else done.discard)(body["task"])
                 self.write_json(self.options.done, sorted(done))
+            return self.send_json({"saved": True})
+        if self.path == "/api/biases":
+            # body: {camera: {area id: bias}}; per-area lower biases tuned in the annotate view.
+            try:
+                cleaned = {camera: {area_id: float(bias) for area_id, bias in areas.items()}
+                           for camera, areas in body.items()}
+            except (AttributeError, TypeError, ValueError):
+                return self.send(400, json.dumps({"error": "Biases must be {camera: {area: number}}"}).encode(),
+                                 "application/json")
+            self.write_json(self.options.area_biases, cleaned)
             return self.send_json({"saved": True})
         if self.path == "/api/latest":
             # body: {"name": "<predictions selection>"}; copies that file to --predictions ("Latest run").
@@ -282,6 +299,39 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send_json({"id": job["id"], "label": label})
         self.send(404, b"Not found", "text/plain")
 
+    def upload(self, length):
+        """Save one uploaded photo to the uploads folder for the final run.
+
+        POST /api/upload?camera=<id>&name=<file> with the JPEG as the raw body. Uploads live in
+        input/uploads/<camera>/, apart from the training photos, so they can never be annotated
+        or trained on. The camera must be in the planogram, the name a plain .jpg filename, the
+        bytes a decodable JPEG under MAX_UPLOAD, and the file must not exist yet.
+        """
+        query = parse_qs(urlsplit(self.path).query)
+        camera = (query.get("camera") or [None])[0]
+        name = (query.get("name") or [None])[0]
+        if camera not in self.planogram:
+            return self.send(400, json.dumps({"error": f"Unknown camera {camera!r}"}).encode(), "application/json")
+        if not name or not UPLOAD_NAME.match(name):
+            return self.send(400, json.dumps({"error": f"Name must be a plain .jpg filename, not {name!r}"}).encode(),
+                             "application/json")
+        if length > MAX_UPLOAD:
+            # Drain nothing: Content-Length exceeds the cap, so refuse before reading the body.
+            return self.send(413, json.dumps({"error": f"File exceeds {MAX_UPLOAD // 1024 // 1024} MB"}).encode(),
+                             "application/json")
+        data = self.rfile.read(length)
+        if data[:2] != b"\xff\xd8" or cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) is None:
+            return self.send(400, json.dumps({"error": f"{name} is not a decodable JPEG"}).encode(), "application/json")
+        dest = Path(self.options.uploads) / camera / name
+        if dest.exists():
+            return self.send(409, json.dumps({"error": f"{camera}/{name} already exists; not overwritten"}).encode(),
+                             "application/json")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        temporary = dest.with_suffix(".jpg.tmp")
+        temporary.write_bytes(data)
+        os.replace(temporary, dest)
+        return self.send_json({"saved": True, "file": name})
+
     def build_command(self, params, output=None):
         """A `python -m shelf.predict` command from the run form's values; raises ValueError when invalid.
 
@@ -303,6 +353,12 @@ class Handler(SimpleHTTPRequestHandler):
         device = params.get("device", "auto")
         if device not in DEVICES:
             raise ValueError(f"Unknown device {device!r}; want {', '.join(DEVICES)}")
+        photos = params.get("photos", "training")
+        if photos not in ("training", "uploaded"):
+            raise ValueError(f"Unknown photos {photos!r}; want training or uploaded")
+        cameras_dir = self.options.cameras if photos == "training" else Path(self.options.uploads)
+        if photos == "uploaded" and not any(Path(cameras_dir).glob("*/*.jpg")):
+            raise ValueError("No uploaded photos yet — upload some first")
         try:
             jobs = int(params.get("jobs", -1))
         except (TypeError, ValueError):
@@ -310,9 +366,10 @@ class Handler(SimpleHTTPRequestHandler):
         out = str(Path(output).resolve()) if output is not None else str(Path(self.options.predictions).resolve())
         command = [sys.executable, "-m", "shelf.predict", "--model", *models,
                    "--planogram", str(Path(self.options.planogram).resolve()),
-                   "--cameras", str(Path(self.options.cameras).resolve()),
+                   "--cameras", str(Path(cameras_dir).resolve()),
                    "--train-cameras", str(Path(self.options.cameras).resolve()),
                    "--annotations", str(Path(self.options.output).resolve()),
+                   "--area-biases", str(Path(self.options.area_biases).resolve()),
                    "--output", out,
                    "--jobs", str(jobs), "--device", device]
         if output is not None:
@@ -339,6 +396,7 @@ class Handler(SimpleHTTPRequestHandler):
             command += ["--evaluate", str(rounds), "--split", split,
                         "--biases", *(str(bias) for bias in biases)]
             return command, f"evaluate {', '.join(models)} ({rounds} rounds)", mode, None
+        scope = " on uploads" if photos == "uploaded" else ""
         try:
             lower_bias = float(params.get("lower_bias", 0.0))
         except (TypeError, ValueError):
@@ -352,8 +410,8 @@ class Handler(SimpleHTTPRequestHandler):
             if folds < 2:
                 raise ValueError("Folds must be at least 2")
             command += ["--out-of-fold", str(folds)]
-            return command, f"out-of-fold {models[0]} ({folds} folds, bias {lower_bias})", mode, f"{models[0]}.out-of-fold"
-        return command, f"predict {models[0]} (bias {lower_bias})", mode, models[0]
+            return command, f"out-of-fold {models[0]} ({folds} folds, bias {lower_bias}){scope}", mode, f"{models[0]}.out-of-fold"
+        return command, f"predict {models[0]} (bias {lower_bias}){scope}", mode, models[0]
 
     def prediction_files(self):
         """The predictions to choose from: the latest run, each model's saved predictions,
@@ -390,7 +448,13 @@ class Handler(SimpleHTTPRequestHandler):
                 camera: sorted(path.name for path in (self.options.cameras / camera).glob("*.jpg"))
                 for camera in sorted(self.planogram)
             },
+            "uploads": {
+                camera: sorted(path.name for path in (Path(self.options.uploads) / camera).glob("*.jpg"))
+                if (Path(self.options.uploads) / camera).is_dir() else []
+                for camera in sorted(self.planogram)
+            },
             "annotations": json.loads(output.read_text()) if output.exists() else {},
+            "biases": json.loads(self.options.area_biases.read_text()) if self.options.area_biases.exists() else {},
             "predictions": json.loads(predictions.read_text()) if predictions.exists() else {},
             "predictionsFile": str(predictions),
             "predictionsName": chosen,
@@ -406,7 +470,11 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
     parser.add_argument("--cameras", type=Path, default=Path("input/cameras"))
+    parser.add_argument("--uploads", type=Path, default=Path("input/uploads"),
+                        help="uploaded validation photos, apart from the training photos (see POST /api/upload)")
     parser.add_argument("--output", type=Path, default=Path("input/annotations.json"))
+    parser.add_argument("--area-biases", type=Path, default=Path("input/area-biases.json"),
+                        help="per-area lower biases tuned in the annotate view")
     parser.add_argument("--predictions-dir", type=Path, default=Path("output/predictions"),
                         help="each model's predictions, selectable on the pages (from python -m shelf.predict --model)")
     parser.add_argument("--predictions", type=Path, default=Path("output/annotations.json"),

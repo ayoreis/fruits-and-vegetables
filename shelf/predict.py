@@ -13,6 +13,9 @@ output/annotations.json, the file to submit.
     --split cameras     with --evaluate, test on cameras the model never saw labelled instead of hidden photos
     --out-of-fold       predict labelled photos with models that never saw their labels, to review mistakes
                         honestly in the admin compare view (saved as output/predictions/<model>.out-of-fold.json)
+
+    Per-area biases from --area-biases ({camera: {area_id: bias}}) add to --lower-bias for that area's
+    answers; missing areas count as zero. Tune them in the admin annotate view.
 """
 
 import argparse
@@ -46,6 +49,15 @@ def area_crops(planogram, cameras_dir, photos):
     return crops
 
 
+def load_area_biases(path):
+    """Per-area lower biases, {(camera, area id): bias}; a missing file or entry means zero."""
+    if not path.exists():
+        return {}
+    return {(camera, area_id): float(bias)
+            for camera, areas in json.loads(path.read_text()).items()
+            for area_id, bias in areas.items()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--model", nargs="+", default=[DEFAULT_MODEL], choices=list(MODELS),
@@ -64,6 +76,8 @@ def main():
                         help="predict labelled photos with models that didn't see their labels")
     parser.add_argument("--lower-bias", type=float, default=0.0,
                         help="lean stock answers further toward lower levels (0 = none)")
+    parser.add_argument("--area-biases", type=Path, default=Path("input/area-biases.json"),
+                        help="per-area lower biases, added to --lower-bias (tuned in the admin annotate view)")
     parser.add_argument("--biases", type=float, nargs="+", default=[0.0],
                         help="lower biases to compare with --evaluate")
     parser.add_argument("--jobs", type=int, default=-1,
@@ -88,19 +102,28 @@ def main():
     labels = [annotations[camera][file][area_id] for camera, file, area_id in train_keys]
     train_features = extract(train_keys, [train_crops[key] for key in train_keys], needs)
     print(f"Training on {len(labels)} labelled areas from {len({k[:2] for k in train_keys})} photos")
+    area_biases = load_area_biases(args.area_biases)
+    if area_biases:
+        print(f"Loaded lower biases for {len(area_biases)} areas from {args.area_biases}")
 
     if args.evaluate:
-        evaluate(args.model, train_features, train_keys, labels, args.evaluate, args.biases, args.split, args.jobs)
+        evaluate(args.model, train_features, train_keys, labels, args.evaluate, args.biases, args.split, args.jobs,
+                 area_biases)
         return
+
+    def biased(probabilities, keys):
+        return [decide(*p, args.lower_bias + area_biases.get((camera, area_id), 0.0))
+                for p, (camera, _, area_id) in zip(probabilities, keys)]
 
     name = args.model[0]
     model = MODELS[name]().fit(train_features, labels)
     photos = [(camera, path.name) for camera in sorted(planogram) for path in sorted((args.cameras / camera).glob("*.jpg"))]
     crops = area_crops(planogram, args.cameras, photos)
     keys = list(crops)
-    answers = [decide(*p, args.lower_bias) for p in model.predict(extract(keys, [crops[key] for key in keys], needs))]
+    answers = biased(model.predict(extract(keys, [crops[key] for key in keys], needs)), keys)
     if args.out_of_fold:
-        held_out = out_of_fold(name, train_features, train_keys, labels, args.out_of_fold, args.lower_bias, args.jobs)
+        held_out = out_of_fold(name, train_features, train_keys, labels, args.out_of_fold, args.lower_bias, args.jobs,
+                               area_biases)
         answers = [held_out.get(key, answer) for key, answer in zip(keys, answers)]
         print(f"{sum(key in held_out for key in keys)} labelled areas predicted out of fold")
     predictions = nested(keys, answers)

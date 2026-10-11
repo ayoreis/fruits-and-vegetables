@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shelf Tasks</title>
+<title>Shock Tasks</title>
 <style>
   :root {
     --bg: #f6f6f3;
@@ -131,7 +131,7 @@
 <body>
 <header>
   <div>
-    <h1>Fruits &amp; Vegetables · Shelf tasks</h1>
+    <h1>Shock · Shelf tasks</h1>
     <div class="store">What the ceiling cameras see on each gondola, worst first</div>
   </div>
   <div class="clock">
@@ -204,6 +204,7 @@ const STATES = {
 };
 
 let planogram, images, predictions, done;
+let uploads = {};
 // Selected time (unix seconds), list filter ("" or a state) and selected task (area id); all kept in the URL.
 let at, show = "", selected = null;
 let photo = new Image();
@@ -231,9 +232,12 @@ function stateOf(prediction) {
   return { empty: "empty", half: "low", full: "ok" }[prediction.stock_level];
 }
 
+// Training and uploaded photos together, oldest first; uploads never train, only show.
+const photosOf = (camera) => [...(images[camera] ?? []), ...(uploads[camera] ?? [])].sort();
+
 // The latest photo each camera took at or before the selected time.
 function latestPhoto(camera) {
-  return images[camera].filter((file) => stamp(file) <= at).at(-1);
+  return photosOf(camera).filter((file) => stamp(file) <= at).at(-1);
 }
 
 // Every area's state in each camera's latest photo, and since when it has been in that state.
@@ -242,7 +246,7 @@ function shelves() {
   for (const camera of Object.keys(planogram).sort()) {
     const file = latestPhoto(camera);
     if (!file) continue;
-    const earlier = images[camera].filter((f) => stamp(f) <= at);
+    const earlier = photosOf(camera).filter((f) => stamp(f) <= at);
     planogram[camera].forEach((area, index) => {
       const state = stateOf(predictions[camera]?.[file]?.[area.area_id]);
       if (!state) return;
@@ -294,7 +298,7 @@ function readUrl() {
   selected = query.get("task");
 }
 
-const allTimes = () => Object.values(images).flat().map(stamp);
+const allTimes = () => [...Object.values(images), ...Object.values(uploads)].flat().map(stamp);
 const earliestTime = () => Math.min(...allTimes());
 const latestTime = () => Math.max(...allTimes());
 
@@ -452,7 +456,7 @@ function stopPlaying() {
 function play() {
   if (at >= latestTime()) at = earliestTime();
   const camera = Object.keys(planogram).find((c) => planogram[c].some((a) => a.area_id === selected));
-  for (const file of images[camera] ?? []) loadPhoto(camera, file);
+  for (const file of photosOf(camera)) loadPhoto(camera, file);
   playing = setInterval(() => {
     if (at >= latestTime()) return stopPlaying();
     at = Math.min(at + TIMELAPSE_STEP, latestTime());
@@ -528,6 +532,7 @@ for (const tile of document.querySelectorAll("[data-show]")) {
   fillPredictionsSelect(state);
   planogram = state.planogram;
   images = state.images;
+  uploads = state.uploads ?? {};
   predictions = state.predictions;
   done = new Set(state.done);
   $("time").min = earliestTime();
