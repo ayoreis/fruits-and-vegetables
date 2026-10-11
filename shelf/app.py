@@ -135,10 +135,12 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         pass
 
-    def send(self, status, body, content_type):
+    def send(self, status, body, content_type, filename=None):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        if filename is not None:
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         self.end_headers()
         self.wfile.write(body)
 
@@ -199,10 +201,13 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path.startswith("/api/predictions/"):
             # One run's predictions by selection name (see prediction_files); unknown names 404.
+            # ?download=1 serves it as a file attachment instead of inline JSON.
             name = path[len("/api/predictions/"):]
             file = self.prediction_files().get(name)
             if file is not None and file.exists():
-                return self.send(200, file.read_bytes(), "application/json")
+                download = parse_qs(url.query).get("download")
+                return self.send(200, file.read_bytes(), "application/json",
+                                 filename=f"{name}.json" if download else None)
             return self.send(404, b"No such predictions", "text/plain")
 
         if match := IMAGE_PATH.match(path):

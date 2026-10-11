@@ -824,15 +824,8 @@ function fillPredictionsSelect(state) {
 }
 
 async function downloadPredictions(name) {
-  const response = await fetch(`/api/predictions/${encodeURIComponent(name)}`);
-  if (!response.ok) return;
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(await response.blob());
-  link.download = `${name}.json`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(link.href), 5000);
+  // Attachment download served by the server; the page stays put.
+  location.assign(`/api/predictions/${encodeURIComponent(name)}?download=1`);
 }
 
 // Copy one predictions file to "Latest run" (the only thing that ever changes it).
