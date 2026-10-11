@@ -177,6 +177,17 @@
   .help { font-size: 12px; color: var(--muted); margin: 0; }
   .help kbd { margin: 0 2px 0 0; }
 
+  .bias-row { display: flex; align-items: center; gap: 6px; }
+  .bias-row button {
+    padding: 9px 14px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
+  }
+  .bias-row button:hover { border-color: var(--muted); }
+  .bias-row span {
+    min-width: 56px; text-align: center; font-variant-numeric: tabular-nums;
+    padding: 9px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+  }
+
   .stats-view { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
   .stats-view h2 { font-size: 15px; margin: 0 0 8px; }
   .stats-view p { margin: 0 0 8px; color: var(--muted); }
@@ -242,14 +253,14 @@
 <main id="admin-main">
   <nav id="admin-nav">
     <div class="filters" id="admin-filters">
-      <label>Status
+      <label id="status-filter">Status
         <select id="filter-status">
           <option value="">All areas</option>
           <option value="todo">Yet to be annotated</option>
           <option value="done">Annotated</option>
         </select>
       </label>
-      <label>Stock
+      <label id="stock-filter">Stock
         <select id="filter-stock">
           <option value="">Any</option>
           <option value="empty">Empty</option>
@@ -257,14 +268,14 @@
           <option value="full">Full</option>
         </select>
       </label>
-      <label>Compliance
+      <label id="compliance-filter">Compliance
         <select id="filter-compliance">
           <option value="">Any</option>
           <option value="true">Compliant</option>
           <option value="false">Wrong product</option>
         </select>
       </label>
-      <label>Camera
+      <label id="camera-filter">Camera
         <select id="filter-camera"><option value="">All</option></select>
       </label>
       <label id="agreement-filter" hidden>Prediction
@@ -334,6 +345,13 @@
           <button data-stock="empty">Empty<kbd>E</kbd></button>
           <button data-stock="half">Half<kbd>H</kbd></button>
           <button data-stock="full">Full<kbd>F</kbd></button>
+        </div>
+
+        <span class="group-label" id="bias-label">Area bias — nudges this spot's stock answers lower</span>
+        <div class="bias-row" role="group" aria-labelledby="bias-label">
+          <button id="bias-down" title="Lower by 0.1 ( [ )">−</button>
+          <span id="bias-value" title="Added to the run's lower bias for this spot"></span>
+          <button id="bias-up" title="Raise by 0.1 ( ] )">+</button>
         </div>
 
         <p class="help wide">
