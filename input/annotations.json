@@ -4524,8 +4524,8 @@
       },
       "6386_5": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_6": {
         "planogram_compliant": true,
@@ -4546,8 +4546,8 @@
       },
       "6386_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_4": {
         "planogram_compliant": true,
@@ -4556,8 +4556,8 @@
       },
       "6386_5": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_6": {
         "planogram_compliant": true,
@@ -4578,8 +4578,8 @@
       },
       "6386_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_4": {
         "planogram_compliant": true,
@@ -4588,8 +4588,8 @@
       },
       "6386_5": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_6": {
         "planogram_compliant": true,
@@ -4610,8 +4610,8 @@
       },
       "6386_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_4": {
         "planogram_compliant": true,
@@ -4620,8 +4620,8 @@
       },
       "6386_5": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_6": {
         "planogram_compliant": true,
@@ -4642,8 +4642,8 @@
       },
       "6386_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_4": {
         "planogram_compliant": true,
@@ -4674,8 +4674,8 @@
       },
       "6386_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_4": {
         "planogram_compliant": true,
@@ -4706,8 +4706,8 @@
       },
       "6386_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6386_4": {
         "planogram_compliant": true,
@@ -4817,8 +4817,8 @@
       },
       "6443_5": {
         "planogram_compliant": false,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6443_6": {
         "planogram_compliant": true,
@@ -5023,8 +5023,8 @@
       },
       "6443_6": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6443_7": {
         "planogram_compliant": true,
@@ -5182,8 +5182,8 @@
       },
       "6443_11": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6443_12": {
         "planogram_compliant": true,
@@ -5249,8 +5249,8 @@
       },
       "6443_11": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6443_12": {
         "planogram_compliant": true,
@@ -5316,8 +5316,8 @@
       },
       "6443_11": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6443_12": {
         "planogram_compliant": true,
@@ -5383,8 +5383,8 @@
       },
       "6443_11": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6443_12": {
         "planogram_compliant": true,
@@ -5450,8 +5450,8 @@
       },
       "6443_11": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6443_12": {
         "planogram_compliant": true,
@@ -5517,8 +5517,8 @@
       },
       "6443_11": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6443_12": {
         "planogram_compliant": true,
@@ -5546,8 +5546,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -5593,8 +5593,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -5640,8 +5640,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -5687,8 +5687,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -5734,8 +5734,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -5781,8 +5781,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -5828,8 +5828,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -6063,8 +6063,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -6093,8 +6093,8 @@
       },
       "6462_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751047858.jpg": {
@@ -6110,8 +6110,8 @@
       },
       "6462_3": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6462_4": {
         "planogram_compliant": true,
@@ -6184,13 +6184,13 @@
       },
       "6468_8": {
         "planogram_compliant": false,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_10": {
         "planogram_compliant": true,
@@ -6219,8 +6219,8 @@
       },
       "6468_15": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_16": {
         "planogram_compliant": true,
@@ -6266,8 +6266,8 @@
       },
       "6468_8": {
         "planogram_compliant": false,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -6348,13 +6348,13 @@
       },
       "6468_8": {
         "planogram_compliant": false,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_10": {
         "planogram_compliant": true,
@@ -6435,8 +6435,8 @@
       },
       "6468_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_10": {
         "planogram_compliant": true,
@@ -6517,8 +6517,8 @@
       },
       "6468_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_10": {
         "planogram_compliant": true,
@@ -6676,8 +6676,8 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -6716,8 +6716,8 @@
       },
       "6468_16": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751029957.jpg": {
@@ -6758,8 +6758,8 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -6798,8 +6798,8 @@
       },
       "6468_16": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751033646.jpg": {
@@ -6840,8 +6840,8 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -6880,8 +6880,8 @@
       },
       "6468_16": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751037301.jpg": {
@@ -6922,8 +6922,8 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -7004,8 +7004,8 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -7044,8 +7044,8 @@
       },
       "6468_16": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751044824.jpg": {
@@ -7086,13 +7086,13 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "empty",
+        "stock_value": 0
       },
       "6468_10": {
         "planogram_compliant": true,
@@ -7126,8 +7126,8 @@
       },
       "6468_16": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751048837.jpg": {
@@ -7168,8 +7168,8 @@
       },
       "6468_8": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6468_9": {
         "planogram_compliant": true,
@@ -7445,8 +7445,8 @@
       },
       "6491_5": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_6": {
         "planogram_compliant": true,
@@ -7455,8 +7455,8 @@
       },
       "6491_7": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_8": {
         "planogram_compliant": true,
@@ -7465,13 +7465,13 @@
       },
       "6491_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6491_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751021816.jpg": {
@@ -7522,8 +7522,8 @@
       },
       "6491_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751025495.jpg": {
@@ -7559,8 +7559,8 @@
       },
       "6491_7": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_8": {
         "planogram_compliant": true,
@@ -7569,13 +7569,13 @@
       },
       "6491_9": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6491_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751029202.jpg": {
@@ -7596,8 +7596,8 @@
       },
       "6491_4": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_5": {
         "planogram_compliant": true,
@@ -7611,8 +7611,8 @@
       },
       "6491_7": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_8": {
         "planogram_compliant": true,
@@ -7626,8 +7626,8 @@
       },
       "6491_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751033170.jpg": {
@@ -7663,8 +7663,8 @@
       },
       "6491_7": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_8": {
         "planogram_compliant": true,
@@ -7705,8 +7705,8 @@
       },
       "6491_5": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6491_6": {
         "planogram_compliant": true,
@@ -7767,8 +7767,8 @@
       },
       "6491_7": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_8": {
         "planogram_compliant": true,
@@ -7809,8 +7809,8 @@
       },
       "6491_5": {
         "planogram_compliant": true,
-        "stock_level": "empty",
-        "stock_value": 0
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6491_6": {
         "planogram_compliant": true,
@@ -7834,8 +7834,8 @@
       },
       "6491_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751048611.jpg": {
@@ -8009,8 +8009,8 @@
       },
       "6591_3": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "empty",
+        "stock_value": 0
       },
       "6591_4": {
         "planogram_compliant": true,
@@ -8628,8 +8628,8 @@
       },
       "6594_12": {
         "planogram_compliant": false,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "empty",
+        "stock_value": 0
       },
       "6594_13": {
         "planogram_compliant": true,
@@ -9427,8 +9427,8 @@
       },
       "6594_11": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "empty",
+        "stock_value": 0
       },
       "6594_12": {
         "planogram_compliant": true,
@@ -9491,8 +9491,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751005810.jpg": {
@@ -9543,8 +9543,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751009927.jpg": {
@@ -9595,8 +9595,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751013921.jpg": {
@@ -9699,8 +9699,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751021920.jpg": {
@@ -9751,8 +9751,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751025662.jpg": {
@@ -9803,8 +9803,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751029808.jpg": {
@@ -9855,8 +9855,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751033637.jpg": {
@@ -9907,8 +9907,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751037494.jpg": {
@@ -9959,8 +9959,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751041407.jpg": {
@@ -10011,8 +10011,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751045840.jpg": {
@@ -10063,8 +10063,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     },
     "1751049846.jpg": {
@@ -10115,8 +10115,8 @@
       },
       "6781_10": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       }
     }
   }
