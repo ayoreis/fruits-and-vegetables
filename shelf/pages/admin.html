@@ -377,19 +377,29 @@
     <div class="run-panel">
       <h2>Upload images</h2>
       <form id="upload-form">
-        <span class="group-label" id="upload-camera-label">Camera</span>
-        <div><select id="upload-camera" aria-labelledby="upload-camera-label"></select></div>
-
-        <span class="group-label" id="upload-files-label">Photos</span>
-        <div><input id="upload-files" type="file" accept="image/jpeg,.jpg" multiple aria-labelledby="upload-files-label"></div>
+        <span class="group-label" id="upload-files-label">Camera folders</span>
+        <div><input id="upload-files" type="file" webkitdirectory aria-labelledby="upload-files-label"></div>
 
         <span></span>
         <div><button id="upload-submit" type="submit">Upload</button></div>
       </form>
-      <p class="note">JPG photos land in <em>input/uploads/&lt;camera&gt;/</em>, apart from the
-        training photos — run with <em>Photos: Uploaded</em> for the final run.
-        Existing files are never overwritten.</p>
+      <p class="note">Pick the folder <em>containing</em> camera folders (<em>6385/….jpg</em>) — every
+        photo lands in <em>input/uploads/&lt;camera&gt;/</em>, apart from the training photos.
+        Pick again to add more folders. Existing files are never overwritten.</p>
       <div id="upload-status" aria-live="polite"></div>
+    </div>
+    <div class="run-panel">
+      <h2>Upload solution</h2>
+      <form id="solution-form">
+        <span class="group-label" id="solution-file-label">annotations.json</span>
+        <div><input id="solution-file" type="file" accept="application/json,.json" aria-labelledby="solution-file-label"></div>
+
+        <span></span>
+        <div><button id="solution-submit" type="submit">Upload</button></div>
+      </form>
+      <p class="note">Ground truth for the uploaded photos, in the challenge's annotation format.
+        Scored on this page only — never trained on.</p>
+      <p class="error" id="solution-error" hidden></p>
     </div>
     <div class="run-panel">
       <h2>New run</h2>
@@ -485,6 +495,7 @@ const DOCUMENT_EXAMPLES = {
 
 let planogram, annotations;
 let biases = {};
+let solutions = {};
 let predictions = {};
 let predictionsFile = "";
 let models = [];
@@ -497,6 +508,7 @@ let resultToken = 0;
 // "annotate", "compare" or "run"; kept in the URL along with the photo, area and filters.
 let view = "annotate";
 let queue = [];
+let uploadsQueue = [];
 let imageIndex = 0;
 let areaIndex = 0;
 // Compliance chosen for the current area before its stock level is set.
@@ -1015,7 +1027,9 @@ function stockCase(label, predicted) {
 
 // Counts of each scoring case over annotated areas for one predictions object,
 // plus per-camera totals and how many annotated areas lack a prediction.
-function computeStats(preds) {
+// Counts of each scoring case for one predictions object over the given photos,
+// plus per-camera totals and how many annotated areas lack a prediction.
+function computeStatsFor(preds, items, getLabel) {
   const counts = {
     identification_correct: 0,
     identification_wrong: 0,
@@ -1025,9 +1039,9 @@ function computeStats(preds) {
   };
   const byCamera = {};
   let missing = 0;
-  for (const { camera, file } of queue) {
+  for (const { camera, file } of items) {
     for (const a of planogram[camera]) {
-      const label = entry(camera, file, a.area_id);
+      const label = getLabel(camera, file, a.area_id);
       if (!label) continue;
       const predicted = preds[camera]?.[file]?.[a.area_id];
       const idCase = predicted && predicted.planogram_compliant === label.planogram_compliant
@@ -1049,6 +1063,9 @@ function computeStats(preds) {
   }
   return { counts, byCamera, missing };
 }
+
+const computeStats = (preds) => computeStatsFor(preds, queue, entry);
+const solutionEntry = (camera, file, areaId) => solutions[camera]?.[file]?.[areaId];
 
 const casePoints = (counts) => Object.entries(counts).reduce((sum, [c, n]) => sum + POINTS[c] * n, 0);
 
@@ -1178,18 +1195,32 @@ function statsResult(preds, title, fileName) {
     head.append(promote);
   }
   section.append(head);
-  const { counts, byCamera, missing } = computeStats(preds);
+  appendStats(section, computeStats(preds), "annotated areas");
+  const solution = computeStatsFor(preds, uploadsQueue, solutionEntry);
+  const solutionAreas = solution.counts.identification_correct + solution.counts.identification_wrong;
+  if (solutionAreas) {
+    const heading = document.createElement("h2");
+    heading.textContent = "Solution score — uploaded photos";
+    section.append(heading);
+    appendStats(section, solution, "solution areas");
+  }
+  return section;
+}
+
+// Summary, per-case and per-camera tables for one scoring.
+function appendStats(section, stats, scope) {
+  const { counts, byCamera, missing } = stats;
   const areas = counts.identification_correct + counts.identification_wrong;
   if (!areas) {
     const note = document.createElement("p");
-    note.textContent = "No annotated areas yet.";
+    note.textContent = `No ${scope} yet.`;
     section.append(note);
-    return section;
+    return;
   }
   const identification = counts.identification_correct / areas;
   const stock = counts.stock_correct / areas;
   const summary = document.createElement("p");
-  summary.innerHTML = `On ${areas} annotated areas: ` +
+  summary.innerHTML = `On ${areas} ${scope}: ` +
     `<strong>${signed(casePoints(counts))} / ${2 * areas}</strong> (${percent(casePoints(counts), 2 * areas)} of maximum) · ` +
     `${percent(counts.identification_correct + counts.stock_correct, 2 * areas)} answers right ` +
     `(identification ${percent(identification * 100, 100)}, stock level ${percent(stock * 100, 100)})`;
@@ -1204,8 +1235,7 @@ function statsResult(preds, title, fileName) {
   if (missing) {
     const note = document.createElement("p");
     note.textContent =
-      `${missing} annotated ${missing === 1 ? "area has" : "areas have"} no prediction ` +
-      `(counted as wrong identification and stock above).`;
+      `${missing} ${scope} with no prediction (counted as wrong identification and stock above).`;
     section.append(note);
   }
   const camerasHeading = document.createElement("h2");
@@ -1697,45 +1727,95 @@ async function submitRun(event) {
   await refreshRuns();
 }
 
+// Photos picked across folder selections, waiting to upload; each needs a camera folder above it.
+let pendingUploads = [];
+
+function renderPending() {
+  const input = $("upload-files");
+  const count = pendingUploads.length;
+  input.title = count ? `${count} photo${count === 1 ? "" : "s"} waiting — pick another folder to add more` : "";
+}
+
 async function uploadImages(event) {
   event.preventDefault();
   const status = $("upload-status");
   status.replaceChildren();
-  const camera = $("upload-camera").value;
-  const files = [...$("upload-files").files];
   const note = (text, tone) => {
     const row = document.createElement("div");
     row.textContent = text;
     if (tone) row.className = tone;
     status.append(row);
   };
-  if (!camera) {
-    note("Pick a camera first.", "bad");
-    return;
-  }
-  if (!files.length) {
-    note("Pick one or more JPG photos first.", "bad");
+  // Camera and filename come from the folder each photo was picked in: <camera>/<file>.
+  const picked = [...$("upload-files").files, ...pendingUploads];
+  pendingUploads = [];
+  renderPending();
+  if (!picked.length) {
+    note("Pick a folder of camera folders first.", "bad");
     return;
   }
   let saved = 0;
-  for (const file of files) {
+  for (const file of picked) {
+    const parts = (file.webkitRelativePath || file.name).split("/");
+    if (parts.length !== 2) {
+      note(`✗ ${file.name}: pick the folder containing camera folders, not deeper`, "bad");
+      continue;
+    }
+    const [camera, name] = parts;
+    if (!(camera in planogram)) {
+      note(`✗ ${file.name}: unknown camera folder ${camera}`, "bad");
+      continue;
+    }
     try {
       const response = await fetch(
-        `/api/upload?camera=${encodeURIComponent(camera)}&name=${encodeURIComponent(file.name)}`,
+        `/api/upload?camera=${encodeURIComponent(camera)}&name=${encodeURIComponent(name)}`,
         { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: file },
       );
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.error ?? `refused (${response.status})`);
-      note(`✓ ${file.name}`, "ok");
+      note(`✓ ${camera}/${name}`, "ok");
       saved++;
     } catch (error) {
-      note(`✗ ${file.name}: ${error.message}`, "bad");
+      note(`✗ ${camera}/${name}: ${error.message}`, "bad");
     }
   }
   if (saved) {
     await refreshState();
     render();
   }
+}
+
+async function uploadSolution(event) {
+  event.preventDefault();
+  const error = $("solution-error");
+  error.hidden = true;
+  const [file] = $("solution-file").files;
+  if (!file) {
+    error.textContent = "Pick an annotations.json file first.";
+    error.hidden = false;
+    return;
+  }
+  let response;
+  try {
+    response = await fetch("/api/solutions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: await file.text(),
+    });
+  } catch (e) {
+    error.textContent = `Could not reach the server: ${e.message}`;
+    error.hidden = false;
+    return;
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    error.textContent = data.error ?? `Server refused the solution (${response.status})`;
+    error.hidden = false;
+    return;
+  }
+  $("solution-file").value = "";
+  await refreshState();
+  render();
 }
 
 function buildCameraOptions(images) {
@@ -1745,10 +1825,6 @@ function buildCameraOptions(images) {
   for (const camera of Object.keys(images)) select.add(new Option(camera, camera));
   select.value = kept in images ? kept : "";
   filters.camera = select.value;
-  const upload = $("upload-camera");
-  const keptUpload = upload.value;
-  upload.replaceChildren(...Object.keys(images).map((camera) => new Option(camera, camera)));
-  if (keptUpload in images) upload.value = keptUpload;
 }
 
 function buildModelControls() {
@@ -1780,11 +1856,13 @@ async function refreshState() {
   planogram = state.planogram;
   annotations = state.annotations;
   biases = state.biases || {};
+  solutions = state.solutions || {};
   predictions = state.predictions;
   predictionsFile = state.predictionsFile;
   models = state.models;
   defaultModel = state.defaultModel;
   queue = Object.entries(state.images).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
+  uploadsQueue = Object.entries(state.uploads ?? {}).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
   buildCameraOptions(state.images);
   buildModelControls();
   runPredictions.clear();
@@ -1795,6 +1873,18 @@ for (const radio of document.querySelectorAll('input[name="run-mode"]')) {
 }
 $("run-form").addEventListener("submit", submitRun);
 $("upload-form").addEventListener("submit", uploadImages);
+$("upload-files").addEventListener("change", (event) => {
+  pendingUploads.push(...event.target.files);
+  event.target.value = "";
+  renderPending();
+  const status = $("upload-status");
+  status.replaceChildren();
+  const row = document.createElement("div");
+  const count = pendingUploads.length;
+  row.textContent = `${count} photo${count === 1 ? "" : "s"} waiting — pick another folder to add more, then Upload`;
+  status.append(row);
+});
+$("solution-form").addEventListener("submit", uploadSolution);
 
 (async () => {
   await refreshState();

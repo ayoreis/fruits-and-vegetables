@@ -29,6 +29,7 @@ import numpy as np
 from shelf.crops import cut_area
 from shelf.models import DEFAULT_MODEL, MODELS
 from shelf.planogram import area_quad, load_cameras
+from shelf.score import STOCK_VALUES
 
 # The staff and admin pages.
 ROOT = Path(__file__).parent / "pages"
@@ -250,6 +251,15 @@ class Handler(SimpleHTTPRequestHandler):
                                  "application/json")
             self.write_json(self.options.area_biases, cleaned)
             return self.send_json({"saved": True})
+        if self.path == "/api/solutions":
+            # body: {camera: {photo file: {area id: label}}}; ground truth for the uploaded photos.
+            # Scored on the Runs page only — predict trains on --annotations alone, never this file.
+            try:
+                cleaned = self.clean_solutions(body)
+            except ValueError as error:
+                return self.send(400, json.dumps({"error": str(error)}).encode(), "application/json")
+            self.write_json(Path(self.options.uploads) / "annotations.json", cleaned)
+            return self.send_json({"saved": True})
         if self.path == "/api/latest":
             # body: {"name": "<predictions selection>"}; copies that file to --predictions ("Latest run").
             # Runs never touch the latest file themselves; this is the only way it changes.
@@ -336,6 +346,37 @@ class Handler(SimpleHTTPRequestHandler):
         temporary.write_bytes(data)
         os.replace(temporary, dest)
         return self.send_json({"saved": True, "file": name})
+
+    def clean_solutions(self, data):
+        """Validate a solution file ({camera: {photo file: {area id: label}}}); raises ValueError."""
+        if not isinstance(data, dict):
+            raise ValueError("Solution must be {camera: {photo: {area: label}}}")
+        cleaned = {}
+        for camera, files in data.items():
+            if camera not in self.planogram:
+                raise ValueError(f"Unknown camera {camera!r}")
+            if not isinstance(files, dict):
+                raise ValueError(f"Camera {camera!r} must map photos to areas")
+            cleaned[camera] = {}
+            for file, areas in files.items():
+                if not isinstance(areas, dict):
+                    raise ValueError(f"Photo {file!r} must map areas to labels")
+                cleaned[camera][file] = {}
+                for area_id, label in areas.items():
+                    if not isinstance(label, dict):
+                        raise ValueError(f"Label for {area_id!r} must be an object")
+                    compliant = label.get("planogram_compliant")
+                    level = label.get("stock_level")
+                    value = label.get("stock_value")
+                    if not isinstance(compliant, bool):
+                        raise ValueError(f"Label for {area_id!r} needs planogram_compliant true/false")
+                    if level not in STOCK_VALUES:
+                        raise ValueError(f"Label for {area_id!r} needs stock_level empty/half/full")
+                    if value != STOCK_VALUES[level]:
+                        raise ValueError(f"Label for {area_id!r} needs stock_value {STOCK_VALUES[level]} for {level}")
+                    cleaned[camera][file][area_id] = {
+                        "planogram_compliant": compliant, "stock_level": level, "stock_value": value}
+        return cleaned
 
     def build_command(self, params, output=None):
         """A `python -m shelf.predict` command from the run form's values; raises ValueError when invalid.
@@ -460,6 +501,7 @@ class Handler(SimpleHTTPRequestHandler):
             },
             "annotations": json.loads(output.read_text()) if output.exists() else {},
             "biases": json.loads(self.options.area_biases.read_text()) if self.options.area_biases.exists() else {},
+            "solutions": json.loads(solution.read_text()) if (solution := Path(self.options.uploads) / "annotations.json").exists() else {},
             "predictions": json.loads(predictions.read_text()) if predictions.exists() else {},
             "predictionsFile": str(predictions),
             "predictionsName": chosen,
