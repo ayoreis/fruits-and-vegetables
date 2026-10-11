@@ -7,6 +7,8 @@ every image is included, since a missing area scores worst of all.
 The predictions go to output/predictions/<model>.json, where the staff and admin pages can pick them, and to
 output/annotations.json, the file to submit.
 
+    --output-only       write only --output (one versioned file per run) instead of both files above
+
     --evaluate          estimate the validation score instead (compare several models with --model a b c)
     --split cameras     with --evaluate, test on cameras the model never saw labelled instead of hidden photos
     --out-of-fold       predict labelled photos with models that never saw their labels, to review mistakes
@@ -53,6 +55,8 @@ def main():
     parser.add_argument("--annotations", type=Path, default=Path("input/annotations.json"), help="labels to train on")
     parser.add_argument("--train-cameras", type=Path, default=Path("input/cameras"), help="photos the labels refer to")
     parser.add_argument("--output", type=Path, default=Path("output/annotations.json"), help="the file to submit")
+    parser.add_argument("--output-only", action="store_true",
+                        help="write only --output, skipping the predictions-dir copy (one file per run)")
     parser.add_argument("--evaluate", type=int, nargs="?", const=20, metavar="ROUNDS",
                         help="estimate the validation score instead of predicting")
     parser.add_argument("--split", choices=["photos", "cameras"], default="photos", help="what --evaluate hides")
@@ -108,11 +112,12 @@ def main():
             predictions.setdefault(camera, {}).setdefault(file, {}).setdefault(area["area_id"], cautious)
 
     saved = PREDICTIONS / f"{name}{'.out-of-fold' if args.out_of_fold else ''}.json"
-    for path in (saved, args.output):
+    targets = [args.output] if args.output_only else [saved, args.output]
+    for path in dict.fromkeys(targets):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(predictions, indent=2))
     count = sum(len(areas) for images in predictions.values() for areas in images.values())
-    print(f"Wrote {count} area predictions for {len(photos)} photos to {saved} and {args.output}")
+    print(f"Wrote {count} area predictions for {len(photos)} photos to {', '.join(str(p) for p in dict.fromkeys(targets))}")
 
 
 if __name__ == "__main__":
