@@ -52,6 +52,7 @@
     align-items: center;
     gap: 16px;
     padding: 10px 16px;
+    min-height: 72px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
   }
@@ -64,7 +65,7 @@
   .views a { padding: 3px 10px; border-radius: 4px; color: var(--muted); text-decoration: none; }
   .views a:hover { color: var(--text); }
   .views a[aria-current="page"] { background: var(--panel); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
-  .summary { flex: 1; color: var(--muted); }
+  .summary { flex: 1; min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .model-picker { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; white-space: nowrap; }
   .model-picker select {
     padding: 3px 4px; border: 1px solid var(--border); border-radius: 4px;
@@ -75,7 +76,7 @@
   .summary strong { color: var(--text); }
   #save-status.error { color: var(--bad); }
 
-  main { display: grid; grid-template-columns: 220px 1fr; min-height: 0; }
+  main { display: grid; grid-template-columns: 330px 1fr; min-height: 0; }
 
   nav { overflow-y: auto; border-right: 1px solid var(--border); padding-bottom: 8px; }
   .filters {
