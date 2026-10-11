@@ -595,8 +595,8 @@
       },
       "6215_5": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6215_6": {
         "planogram_compliant": true,
@@ -1974,8 +1974,8 @@
       },
       "6373_11": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6373_12": {
         "planogram_compliant": true,
@@ -3571,8 +3571,8 @@
       },
       "6383_7": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "empty",
+        "stock_value": 0
       },
       "6383_8": {
         "planogram_compliant": true,
@@ -3588,8 +3588,8 @@
     "1751044960.jpg": {
       "6383_1": {
         "planogram_compliant": true,
-        "stock_level": "half",
-        "stock_value": 0.5
+        "stock_level": "full",
+        "stock_value": 1
       },
       "6383_2": {
         "planogram_compliant": true,
