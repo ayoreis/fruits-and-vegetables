@@ -9,6 +9,10 @@ cached in output/cache, so each crop goes through each model once, and the model
     dino_grid       the patch embeddings averaged into a 2x2 grid
     histogram       HSV colour histogram
     product_scores  CLIP's score for the planned product, and its best score for the camera's other products
+    gemma           EmbeddingGemma 2 embedding of the whole crop (multimodal, at a 70-token image budget)
+    gemma_product_scores
+                    like product_scores, but EmbeddingGemma 2 matching the crop against the original Portuguese
+                    catalogue names (it's multilingual, so no translation)
     areas           which area the crop is (camera/area id), for per-area adjustments
 """
 
@@ -20,12 +24,16 @@ from PIL import Image
 
 from shelf.products import english_name
 
-FEATURES = ("clip", "dino", "dino_patches", "dino_grid", "histogram", "product_scores", "areas")
+FEATURES = ("clip", "dino", "dino_patches", "dino_grid", "histogram", "product_scores", "gemma", "gemma_product_scores", "areas")
 CLIP_MODEL = ("ViT-B-32", "laion2b_s34b_b79k")
 DINO_MODEL = "vit_small_patch14_dinov2.lvd142m"
 PATCH_GRID = 8
 PAD_COLOUR = (124, 116, 104)  # roughly CLIP's mean pixel, so padding looks neutral
 PRODUCT_TEMPLATES = ["a photo of {}.", "a supermarket crate of {}.", "{} on display in a supermarket."]
+GEMMA_MODEL = "google/embeddinggemma-2"
+# Image detail in "soft tokens" (70-1120, 280 by default). 70 is 5.6x faster on CPU than 280 and still told
+# bananas from oranges on every crop we tried.
+GEMMA_IMAGE_TOKENS = 70
 
 
 def padded(crop):
@@ -120,6 +128,31 @@ class Embedder:
         return mean / np.linalg.norm(mean)
 
 
+class GemmaEmbedder:
+    """EmbeddingGemma 2 image and text embeddings, normalised to unit length (text and image share one space)."""
+
+    def __init__(self, device="auto"):
+        import torch
+        from sentence_transformers import SentenceTransformer
+
+        self.device = pick_device(device)
+        # The audio encoder isn't needed; float16 silently breaks this model, so use bfloat16 or float32 only.
+        dtype = torch.bfloat16 if self.device == "cuda" and torch.cuda.is_bf16_supported() else torch.float32
+        print(f"Running EmbeddingGemma 2 on {self.device}")
+        self.model = SentenceTransformer(
+            GEMMA_MODEL, device=self.device, config_kwargs={"audio_config": None},
+            model_kwargs={"torch_dtype": dtype},
+            processor_kwargs={"max_soft_tokens": GEMMA_IMAGE_TOKENS, "image_seq_length": GEMMA_IMAGE_TOKENS},
+        )
+
+    def images(self, crops):
+        return self.model.encode([padded(crop) for crop in crops], normalize_embeddings=True, show_progress_bar=len(crops) > 64)
+
+    def text(self, names):
+        # Images take no prefix; text queries use the model's retrieval prefix.
+        return self.model.encode([f"task: search result | query: {name}" for name in names], normalize_embeddings=True)
+
+
 class FeatureExtractor:
     """Named features for area crops keyed by (camera, photo file, area id); see the module docstring."""
 
@@ -128,11 +161,17 @@ class FeatureExtractor:
         self.cache = cache
         self.device = device
         self._embedder = None
+        self._gemma = None
 
     @property
     def embedder(self):
         self._embedder = self._embedder or Embedder(self.device)
         return self._embedder
+
+    @property
+    def gemma(self):
+        self._gemma = self._gemma or GemmaEmbedder(self.device)
+        return self._gemma
 
     def _cached(self, name, ids, compute):
         path = self.cache / f"{name}.npz"
@@ -170,6 +209,10 @@ class FeatureExtractor:
                 value = np.array([histogram_features(crop) for crop in crops])
             elif name == "product_scores":
                 value = self.product_scores(need("clip"), keys)
+            elif name == "gemma":
+                value = self._cached(f"embeddinggemma2-{GEMMA_IMAGE_TOKENS}", ids, lambda m: self.gemma.images(crops_for(m)))
+            elif name == "gemma_product_scores":
+                value = self.gemma_product_scores(need("gemma"), keys)
             elif name == "areas":
                 value = np.array([f"{camera}/{area_id}" for camera, _, area_id in keys]).reshape(-1, 1)
             else:
@@ -180,6 +223,20 @@ class FeatureExtractor:
         for name in names:
             need(name)
         return {name: features[name] for name in names}
+
+    def gemma_product_scores(self, gemma, keys):
+        """EmbeddingGemma 2's score for the planned product's catalogue name against the camera's other products."""
+        names = sorted({p["product_name"] for c in self.planogram.values() for p in c["products"]})
+        # A lambda, so the model only loads when a name is missing from the cache.
+        text = dict(zip(names, self._cached("embeddinggemma2-text", names, lambda missing: self.gemma.text(missing))))
+        rows = []
+        for embedding, (camera, _, area_id) in zip(gemma, keys):
+            products = self.planogram[camera]["products"]
+            planned = next(p for p in products if p["area_id"] == area_id)["product_name"]
+            others = [100 * embedding @ text[name] for name in {p["product_name"] for p in products} if name != planned]
+            planned_score = 100 * embedding @ text[planned]
+            rows.append([planned_score, max(others) if others else planned_score - 10])
+        return np.array(rows)
 
     def product_scores(self, clip, keys):
         """CLIP's score for the planned product, and its best score for any other product on the same camera."""

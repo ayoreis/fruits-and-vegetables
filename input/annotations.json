@@ -199,8 +199,8 @@
       },
       "6215_9": {
         "planogram_compliant": false,
-        "stock_level": "full",
-        "stock_value": 1
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6215_10": {
         "planogram_compliant": true,
@@ -278,8 +278,8 @@
       },
       "6215_4": {
         "planogram_compliant": true,
-        "stock_level": "full",
-        "stock_value": 1
+        "stock_level": "half",
+        "stock_value": 0.5
       },
       "6215_5": {
         "planogram_compliant": true,

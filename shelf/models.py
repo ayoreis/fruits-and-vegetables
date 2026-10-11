@@ -200,11 +200,26 @@ def ensemble_patch_fill():
     )
 
 
+def gemma():
+    """EmbeddingGemma 2 alone: one multimodal model for stock and for compliance (against the Portuguese names)."""
+    return ShelfModel([LogisticStock("gemma")], LogisticCompliance("gemma", "gemma_product_scores"))
+
+
+def ensemble_gemma():
+    """The ensemble with EmbeddingGemma 2 as a third stock opinion, and its product scores added to compliance."""
+    return ShelfModel(
+        [LogisticStock("clip", "histogram"), LogisticStock("dino"), LogisticStock("gemma")],
+        LogisticCompliance("clip", "product_scores", "gemma_product_scores"),
+    )
+
+
 MODELS = {
     "ensemble": ensemble,
     "clip-only": clip_only,
     "patch-fill": patch_fill,
     "dino-grid": dino_grid,
     "ensemble+patch-fill": ensemble_patch_fill,
+    "gemma": gemma,
+    "ensemble+gemma": ensemble_gemma,
 }
 DEFAULT_MODEL = "ensemble"

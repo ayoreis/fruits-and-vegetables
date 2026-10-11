@@ -6,4 +6,5 @@ pillow
 torch
 open_clip_torch
 timm
+sentence-transformers
 scikit-learn
