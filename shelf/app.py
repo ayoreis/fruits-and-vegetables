@@ -52,6 +52,9 @@ running_run = [None]
 MAX_RUN_LOG = 100_000
 MAX_RUNS = 20
 DEVICES = ("auto", "cpu", "cuda", "mps")
+# Uploaded validation photos live here, always: apart from the training photos so they can never
+# be annotated or trained on, and git-ignored so validation sets stay out of the repo.
+UPLOADS_DIR = Path("input/uploads")
 UPLOAD_NAME = re.compile(r"^[\w][\w.\-]{0,100}\.jpg$")
 MAX_UPLOAD = 50 * 1024 * 1024
 
@@ -171,7 +174,7 @@ class Handler(SimpleHTTPRequestHandler):
         os.replace(temporary, path)
 
     def image_path(self, camera, timestamp):
-        for base in (self.options.cameras, self.options.uploads):
+        for base in (self.options.cameras, UPLOADS_DIR):
             path = Path(base) / camera / f"{timestamp}.jpg"
             if camera in self.planogram and path.is_file():
                 return path
@@ -258,7 +261,7 @@ class Handler(SimpleHTTPRequestHandler):
                 cleaned = self.clean_solutions(body)
             except ValueError as error:
                 return self.send(400, json.dumps({"error": str(error)}).encode(), "application/json")
-            self.write_json(Path(self.options.uploads) / "annotations.json", cleaned)
+            self.write_json(UPLOADS_DIR / "annotations.json", cleaned)
             return self.send_json({"saved": True})
         if self.path == "/api/latest":
             # body: {"name": "<predictions selection>"}; copies that file to --predictions ("Latest run").
@@ -337,7 +340,7 @@ class Handler(SimpleHTTPRequestHandler):
         data = self.rfile.read(length)
         if data[:2] != b"\xff\xd8" or cv2.imdecode(np.frombuffer(data, np.uint8), cv2.IMREAD_COLOR) is None:
             return self.send(400, json.dumps({"error": f"{name} is not a decodable JPEG"}).encode(), "application/json")
-        dest = Path(self.options.uploads) / camera / name
+        dest = UPLOADS_DIR / camera / name
         if dest.exists():
             return self.send(409, json.dumps({"error": f"{camera}/{name} already exists; not overwritten"}).encode(),
                              "application/json")
@@ -402,7 +405,7 @@ class Handler(SimpleHTTPRequestHandler):
         photos = params.get("photos", "training")
         if photos not in ("training", "uploaded"):
             raise ValueError(f"Unknown photos {photos!r}; want training or uploaded")
-        cameras_dir = self.options.cameras if photos == "training" else Path(self.options.uploads)
+        cameras_dir = self.options.cameras if photos == "training" else UPLOADS_DIR
         if photos == "uploaded" and not any(Path(cameras_dir).glob("*/*.jpg")):
             raise ValueError("No uploaded photos yet — upload some first")
         try:
@@ -495,13 +498,13 @@ class Handler(SimpleHTTPRequestHandler):
                 for camera in sorted(self.planogram)
             },
             "uploads": {
-                camera: sorted(path.name for path in (Path(self.options.uploads) / camera).glob("*.jpg"))
-                if (Path(self.options.uploads) / camera).is_dir() else []
+                camera: sorted(path.name for path in (UPLOADS_DIR / camera).glob("*.jpg"))
+                if (UPLOADS_DIR / camera).is_dir() else []
                 for camera in sorted(self.planogram)
             },
             "annotations": json.loads(output.read_text()) if output.exists() else {},
             "biases": json.loads(self.options.area_biases.read_text()) if self.options.area_biases.exists() else {},
-            "solutions": json.loads(solution.read_text()) if (solution := Path(self.options.uploads) / "annotations.json").exists() else {},
+            "solutions": json.loads(solution.read_text()) if (solution := UPLOADS_DIR / "annotations.json").exists() else {},
             "predictions": json.loads(predictions.read_text()) if predictions.exists() else {},
             "predictionsFile": str(predictions),
             "predictionsName": chosen,
@@ -517,8 +520,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
     parser.add_argument("--cameras", type=Path, default=Path("input/cameras"))
-    parser.add_argument("--uploads", type=Path, default=Path("input/uploads"),
-                        help="uploaded validation photos, apart from the training photos (see POST /api/upload)")
     parser.add_argument("--output", type=Path, default=Path("input/annotations.json"))
     parser.add_argument("--area-biases", type=Path, default=Path("input/area-biases.json"),
                         help="per-area lower biases tuned in the annotate view")

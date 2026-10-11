@@ -1758,6 +1758,10 @@ async function uploadImages(event) {
     note("Pick a folder of camera folders first.", "bad");
     return;
   }
+  if (!picked.some((file) => (file.webkitRelativePath || "").includes("/"))) {
+    note("The browser shared no folder structure, so every photo counts as loose — " +
+      "set the loose-files camera (folder picks keep their structure in Chrome/Edge).");
+  }
   let saved = 0;
   for (const file of picked) {
     // Camera and filename come from the folders each photo was picked in: <camera>/<file>.
@@ -1886,6 +1890,11 @@ async function refreshState() {
   buildCameraOptions(state.images);
   buildModelControls();
   runPredictions.clear();
+  const present = Object.entries(state.uploads ?? {}).filter(([, files]) => files.length);
+  const total = present.reduce((sum, [, files]) => sum + files.length, 0);
+  $("uploads-info").textContent = total
+    ? `On the server: ${total} uploaded photo${total === 1 ? "" : "s"} (${present.map(([camera]) => camera).join(", ")}). Delete from input/uploads/ to remove them.`
+    : "On the server: no uploaded photos yet.";
 }
 
 for (const radio of document.querySelectorAll('input[name="run-mode"]')) {
