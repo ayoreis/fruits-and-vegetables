@@ -103,6 +103,12 @@
   nav .count.done { color: var(--ok); }
   #history button .sub { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
   #history button[aria-current="true"] .sub { color: #111; }
+  .run-tabs { display: flex; gap: 2px; padding: 12px 12px 0; }
+  .run-tabs button {
+    flex: 1; padding: 6px 4px; border: 1px solid var(--border); border-radius: 6px;
+    background: var(--panel); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+  }
+  .run-tabs button[aria-selected="true"] { background: var(--text); border-color: var(--text); color: var(--pressed-text); font-weight: 600; }
 
   .viewer { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 12px; }
   .photo-bar { display: flex; align-items: center; gap: 12px; }
@@ -185,9 +191,10 @@
     background: var(--bg); color: var(--text); font: inherit; cursor: pointer;
   }
   .bias-row button:hover { border-color: var(--muted); }
-  .bias-row span {
-    min-width: 140px; text-align: center; font-variant-numeric: tabular-nums;
+  .bias-row input {
+    width: 140px; text-align: center; font-variant-numeric: tabular-nums;
     padding: 9px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
+    color: var(--text); font: inherit;
   }
 
   .stats-view { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
@@ -319,6 +326,10 @@
     </div>
     <div id="images"></div>
     <div id="history-wrap" hidden>
+      <div class="run-tabs" role="tablist" aria-label="Runs sections">
+        <button id="tab-runs" role="tab">Runs</button>
+        <button id="tab-new" role="tab">New run</button>
+      </div>
       <h2>Runs</h2>
       <div id="history"></div>
     </div>
@@ -372,16 +383,22 @@
         <span class="group-label" id="bias-label">Area bias — leans this spot's predicted stock lower or higher, on every photo</span>
         <div class="bias-row" role="group" aria-labelledby="bias-label">
           <button id="bias-down" title="Predict lower stock for this spot ( [ )">▼ Lower</button>
-          <span id="bias-value" title="Added to the run's lower bias for this spot (positive leans lower)"></span>
+          <input id="bias-value" type="number" step="0.1" title="Added to the run's lower bias for this spot (positive leans lower)" aria-label="Area lower bias">
           <button id="bias-up" title="Predict higher stock for this spot ( ] )">▲ Higher</button>
         </div>
 
         <span class="group-label" id="half-bias-label">Half band — how readily this spot is called half</span>
         <div class="bias-row" role="group" aria-labelledby="half-bias-label">
           <button id="half-narrower" title="Call half less often for this spot">◀ Narrower</button>
-          <span id="half-bias-value" title="Added to the run's half bias for this spot (positive widens half)"></span>
+          <input id="half-bias-value" type="number" step="0.1" title="Added to the run's half bias for this spot (positive widens half)" aria-label="Area half bias">
           <button id="half-wider" title="Call half more often for this spot, from both sides">Wider ▶</button>
         </div>
+
+        <p class="help wide">
+          Order: first the run-wide biases on the Runs page (Lower, then Half — Evaluate compares values),
+          then this spot's Area bias, then its Half band. Area values add to the run's and apply to
+          every photo of this spot; fix the overall level before fine-tuning half.
+        </p>
 
         <p class="help wide">
           <kbd>←</kbd><kbd>→</kbd> area · <kbd>↑</kbd><kbd>↓</kbd> image · <kbd>Del</kbd> clear ·
@@ -393,6 +410,7 @@
 
   <section class="run-view" id="run-view" hidden>
     <div class="stats-view" id="run-result"></div>
+    <div id="run-forms">
     <div class="run-panel">
       <h2>Upload images</h2>
       <form id="upload-form">
@@ -452,6 +470,7 @@
         <span class="group-label only-predict" id="run-half-bias-label">Half bias</span>
         <div class="only-predict">
           <input id="run-half-bias" type="number" value="0" step="0.1" aria-labelledby="run-half-bias-label">
+          <p class="help">Order: Lower first (overall level), then Half (how often half is called); per-area biases in Annotate add to these.</p>
         </div>
 
         <span class="group-label only-oof" id="run-folds-label" hidden>Folds</span>
@@ -472,7 +491,9 @@
         <span class="group-label only-evaluate" id="run-half-biases-label" hidden>Half biases</span>
         <div class="only-evaluate" hidden>
           <input id="run-half-biases" type="text" value="0" aria-labelledby="run-half-biases-label">
-          <p class="help">Every pairing of lower and half bias is scored, on held-out photos and on the uploads.</p>
+          <p class="help">Every pairing of lower and half bias is scored, on held-out photos and on the uploads.
+            Order: tune Lower first (overall empty/half/full shift — predicting above the true stock costs −3,
+            below costs −2), then Half (how often half is called), then per-area biases in Annotate.</p>
         </div>
 
         <span class="group-label only-evaluate" id="run-split-label" hidden>Split</span>
@@ -504,6 +525,7 @@
       <p class="note">Trains on the current hand labels. Each predict run writes a new
         versioned file — nothing is overwritten. <em>Set as latest</em> makes a run the submission file.</p>
       <p class="error" id="run-error" hidden></p>
+    </div>
     </div>
   </section>
 </main>
@@ -537,6 +559,7 @@ let defaultModel = "ensemble";
 let runJobs = [];
 let runPoll = null;
 let selectedRun = "latest";
+let runTab = "runs";
 let predictionNames = [];
 const runPredictions = new Map();
 let resultToken = 0;
@@ -907,6 +930,7 @@ function currentUrl() {
   const query = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
   if (chosenPredictions !== "latest") query.set("predictions", chosenPredictions);
   if (view === "run" && selectedRun !== "latest") query.set("run", selectedRun);
+  if (view === "run" && runTab === "new") query.set("tab", "new");
   const suffix = query.size ? `?${query}` : "";
   if (view === "run") return `/admin/run${suffix}`;
   const { camera, file } = current();
@@ -932,6 +956,7 @@ function readUrl() {
     const wanted = query.get("run") ?? "latest";
     selectedRun = wanted === "latest" || wanted.startsWith("file:") ||
       runJobs.some((job) => String(job.id) === wanted) ? wanted : "latest";
+    runTab = query.get("tab") === "new" ? "new" : "runs";
     imageIndex = 0;
     areaIndex = 0;
     return true;
@@ -1016,12 +1041,9 @@ function setBias(value, kind = "lower") {
 }
 
 function renderBias() {
-  const value = currentBias();
-  $("bias-value").textContent =
-    value > 0 ? `leans lower ${value.toFixed(1)}` : value < 0 ? `leans higher ${(-value).toFixed(1)}` : "none";
-  const half = currentHalfBias();
-  $("half-bias-value").textContent =
-    half > 0 ? `half wider ${half.toFixed(1)}` : half < 0 ? `half narrower ${(-half).toFixed(1)}` : "none";
+  // Number inputs mirror the stored biases, so they can be typed directly as well as stepped with the buttons.
+  if (document.activeElement !== $("bias-value")) $("bias-value").value = currentBias().toFixed(1);
+  if (document.activeElement !== $("half-bias-value")) $("half-bias-value").value = currentHalfBias().toFixed(1);
 }
 function save() {
   const status = $("save-status");
@@ -1055,8 +1077,11 @@ function render() {
   $("images").hidden = run;
   $("history-wrap").hidden = !run;
   if (run) {
+    renderRunTabs();
+    $("run-result").hidden = runTab !== "runs";
+    $("run-forms").hidden = runTab !== "new";
     renderHistory();
-    renderRunResult();
+    if (runTab === "runs") renderRunResult();
   } else {
     renderSidebar();
     renderPhoto();
@@ -1345,7 +1370,18 @@ function logPre(job, scroll) {
 
 function selectRun(id) {
   selectedRun = id;
+  runTab = "runs";
   render();
+}
+
+function setRunTab(tab) {
+  runTab = tab;
+  render();
+}
+
+function renderRunTabs() {
+  $("tab-runs").setAttribute("aria-selected", String(runTab === "runs"));
+  $("tab-new").setAttribute("aria-selected", String(runTab === "new"));
 }
 
 function historyItem(id, title, sub, status) {
@@ -1713,6 +1749,19 @@ $("bias-down").onclick = () => setBias(currentBias() + 0.1);
 $("bias-up").onclick = () => setBias(currentBias() - 0.1);
 $("half-wider").onclick = () => setBias(currentHalfBias() + 0.1, "half");
 $("half-narrower").onclick = () => setBias(currentHalfBias() - 0.1, "half");
+// Typed biases apply on change (Enter/blur); an unparseable value resets to the stored bias.
+$("bias-value").addEventListener("change", (event) => {
+  const value = parseFloat(event.target.value);
+  event.target.blur();
+  if (Number.isFinite(value)) setBias(value);
+  else renderBias();
+});
+$("half-bias-value").addEventListener("change", (event) => {
+  const value = parseFloat(event.target.value);
+  event.target.blur();
+  if (Number.isFinite(value)) setBias(value, "half");
+  else renderBias();
+});
 $("timelapse").onclick = (event) => {
   event.currentTarget.blur();
   toggleTimelapse();
@@ -1834,6 +1883,7 @@ async function submitRun(event) {
     return;
   }
   selectedRun = String(data.id);
+  runTab = "runs";
   await refreshRuns();
 }
 
@@ -2013,6 +2063,8 @@ for (const radio of document.querySelectorAll('input[name="run-mode"]')) {
   radio.addEventListener("change", syncRunForm);
 }
 $("run-form").addEventListener("submit", submitRun);
+$("tab-runs").onclick = () => setRunTab("runs");
+$("tab-new").onclick = () => setRunTab("new");
 $("upload-form").addEventListener("submit", uploadImages);
 $("upload-files").addEventListener("change", (event) => {
   pendingUploads.push(...event.target.files);

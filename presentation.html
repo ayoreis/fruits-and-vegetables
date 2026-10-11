@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shock — Results</title>
+<style>
+  :root { --bg:#101210; --panel:#1a1d1a; --text:#f2f3ef; --muted:#a8ada4; --accent:#f2b31b; --ok:#4caf7a; --border:#2c302c; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,sans-serif; }
+  .deck { max-width:960px; margin:0 auto; padding:48px 24px 64px; }
+  header p { color:var(--muted); margin:4px 0 0; }
+  h1 { font-size:40px; margin:0; letter-spacing:-1px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:2px; color:var(--muted); margin:40px 0 12px; }
+  .cards { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:700px){ .cards{grid-template-columns:1fr;} }
+  .card { background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:24px; }
+  .card h3 { margin:0 0 4px; font-size:18px; }
+  .card .sub { color:var(--muted); font-size:13px; margin:0 0 16px; }
+  .big { font-size:44px; font-weight:800; letter-spacing:-1px; }
+  .big small { font-size:18px; color:var(--muted); font-weight:600; }
+  .pct { display:inline-block; margin-left:10px; padding:2px 10px; border-radius:20px; background:var(--ok); color:#0d120d; font-weight:700; font-size:14px; vertical-align:middle; }
+  .bar { height:10px; border-radius:6px; background:var(--border); overflow:hidden; margin:14px 0 8px; }
+  .bar div { height:100%; background:var(--accent); }
+  .meta { color:var(--muted); font-size:14px; }
+  .meta strong { color:var(--text); }
+  table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--border); border-radius:14px; overflow:hidden; font-size:15px; }
+  th,td { text-align:left; padding:12px 16px; border-bottom:1px solid var(--border); }
+  tr:last-child th, tr:last-child td { border-bottom:0; }
+  th { color:var(--muted); font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:1px; }
+  td.num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  .note { color:var(--muted); font-size:13px; margin-top:12px; }
+  footer { color:var(--muted); font-size:13px; margin-top:40px; border-top:1px solid var(--border); padding-top:16px; }
+</style>
+</head>
+<body>
+<div class="deck">
+  <header>
+    <h1>Shock — shelf monitoring results</h1>
+    <p>Fruits &amp; vegetables · planogram compliance + stock level per area</p>
+  </header>
+
+  <h2>Scores</h2>
+  <div class="cards">
+    <div class="card">
+      <h3>Training set</h3>
+      <p class="sub">Original labelled photos · 1,947 areas</p>
+      <div class="big">3,832 <small>/ 3,894</small><span class="pct">98% of max</span></div>
+      <div class="bar"><div style="width:98.4%"></div></div>
+      <p class="meta"><strong>100% answers right</strong> (identification + stock level)</p>
+    </div>
+    <div class="card">
+      <h3>Validation set</h3>
+      <p class="sub">Uploaded photos vs uploaded solution · 289 areas</p>
+      <div class="big">+527 <small>/ 578</small><span class="pct">91% of max</span></div>
+      <div class="bar"><div style="width:91.2%"></div></div>
+      <p class="meta"><strong>97% answers right</strong> (identification + stock level)</p>
+    </div>
+  </div>
+
+  <h2>Speed</h2>
+  <table>
+    <tr><th>Stage</th><th style="text-align:right">Per photo</th></tr>
+    <tr><td>Full predict run, warm cache — 208 photos / 2,260 areas in ~5.1s (incl. training on 1,947 areas)</td><td class="num">~24 ms</td></tr>
+    <tr><td>Same run per area</td><td class="num">~2.3 ms</td></tr>
+    <tr><td>Cold feature extraction, CPU — clip-only model</td><td class="num">~1.1 s</td></tr>
+    <tr><td>Cold feature extraction, CPU — ensemble model</td><td class="num">~2.7 s</td></tr>
+    <tr><td>Bias change (re-decides saved probabilities, no model rerun)</td><td class="num">instant</td></tr>
+  </table>
+  <p class="note">Warm-cache timing from logged runs in output/runs.json. Cold extraction costs are the documented
+  CPU figures in shelf/models.py; features are cached in output/cache so each crop pays that once.
+  GPU via --device cuda/mps is faster. Fit/predict uses single-thread logistic regressions; --evaluate and
+  --out-of-fold parallelise across processes with --jobs.</p>
+
+  <h2>Scoring rules</h2>
+  <p class="note">Per area: identification correct +1 / wrong −2; stock correct +1, below −2, above −3.
+  Missing predictions score worst. Maximum is 2 points per area (3,894 training · 578 validation).</p>
+
+  <footer>Generated for presentation · Shock (flock-for-shelves)</footer>
+</div>
+</body>
+</html>
