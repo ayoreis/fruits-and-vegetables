@@ -135,6 +135,9 @@
     font: inherit; cursor: pointer;
   }
   .links button:hover { color: var(--text); text-decoration: underline; }
+  .links.danger { margin-top: 0; }
+  .links.danger button:hover { color: var(--bad); }
+  .links button:disabled { opacity: .4; cursor: default; text-decoration: none; color: var(--muted); }
   kbd {
     font: 11px ui-monospace, monospace; padding: 0 4px; margin-left: 4px;
     border: 1px solid currentColor; border-radius: 3px; opacity: .6;
@@ -199,6 +202,10 @@
           <button id="clear" title="Remove this area's annotation">Clear area</button>
           <button id="next">Next area →</button>
         </div>
+        <div class="links danger" role="group" aria-label="Clear annotations">
+          <button id="clear-photo"></button>
+          <button id="clear-camera"></button>
+        </div>
       </div>
 
       <div class="controls">
@@ -215,11 +222,11 @@
           <button data-compliant="false">Wrong product<kbd>W</kbd></button>
         </div>
 
-        <span class="group-label" id="stock-label">Stock level — saves and moves on</span>
+        <span class="group-label" id="stock-label">Stock level — saves and moves to the next unannotated area</span>
         <div class="choices three" role="group" aria-labelledby="stock-label">
-          <button data-stock="empty">Empty<kbd>1</kbd></button>
-          <button data-stock="half">Half<kbd>2</kbd></button>
-          <button data-stock="full">Full<kbd>3</kbd></button>
+          <button data-stock="empty">Empty<kbd>E</kbd></button>
+          <button data-stock="half">Half<kbd>H</kbd></button>
+          <button data-stock="full">Full<kbd>F</kbd></button>
         </div>
 
         <p class="help wide">
@@ -233,7 +240,7 @@
 
 <script>
 const STOCK_VALUES = { empty: 0, half: 0.5, full: 1 };
-const STOCK_KEYS = { 1: "empty", 2: "half", 3: "full" };
+const STOCK_KEYS = { e: "empty", h: "half", f: "full" };
 
 // Reference annotations from the challenge document. Their photos are not in the dataset,
 // so they are shown on every photo of the same area and never saved.
@@ -316,12 +323,42 @@ function setCompliance(compliant) {
 }
 
 function setStock(level) {
+  // Editing a photo that was already fully annotated stays put instead of jumping to another photo.
+  const wasComplete = doneCount(current()) === areas().length;
   setEntry({ planogram_compliant: currentCompliant(), stock_level: level, stock_value: STOCK_VALUES[level] });
-  nextArea();
+  if (wasComplete) render();
+  else nextOpenArea();
 }
 
 function clearArea() {
   setEntry(null);
+  pendingCompliant = true;
+  render();
+}
+
+const annotationCount = (count) => (count === 1 ? "1 annotation" : `all ${count} annotations`);
+const photoCount = () => Object.keys(annotations[current().camera]?.[current().file] ?? {}).length;
+const cameraCount = () =>
+  Object.values(annotations[current().camera] ?? {}).reduce((sum, areas) => sum + Object.keys(areas).length, 0);
+
+function clearPhoto() {
+  const { camera, file } = current();
+  const count = photoCount();
+  if (!count || !confirm(`Remove ${annotationCount(count)} from photo ${file} (camera ${camera})?`)) return;
+  delete annotations[camera][file];
+  if (!Object.keys(annotations[camera]).length) delete annotations[camera];
+  save();
+  pendingCompliant = true;
+  render();
+}
+
+function clearCamera() {
+  const { camera } = current();
+  const count = cameraCount();
+  const photos = Object.keys(annotations[camera] ?? {}).length;
+  if (!count || !confirm(`Remove ${annotationCount(count)} from ${photos} photo${photos === 1 ? "" : "s"} of camera ${camera}?`)) return;
+  delete annotations[camera];
+  save();
   pendingCompliant = true;
   render();
 }
@@ -350,6 +387,18 @@ function selectArea(index) {
 
 function nextArea() {
   const next = positions().find((p) => isBefore([imageIndex, areaIndex], p) && matches(...p));
+  if (next) selectImage(...next);
+  else render();
+}
+
+// The next area that matches the filters and has no annotation yet. Open areas in the current photo come first,
+// wrapping around within it; then later photos, wrapping around to the start.
+function nextOpenArea() {
+  const isOpen = ([i, j]) => !entry(queue[i].camera, queue[i].file, planogram[queue[i].camera][j].area_id);
+  const open = positions().filter((p) => matches(...p) && isOpen(p));
+  const inPhoto = open.filter(([i]) => i === imageIndex);
+  const after = (list) => list.find((p) => isBefore([imageIndex, areaIndex], p));
+  const next = after(inPhoto) ?? inPhoto[0] ?? after(open) ?? open[0];
   if (next) selectImage(...next);
   else render();
 }
@@ -533,6 +582,12 @@ function renderPanel() {
   $("area-id").textContent = `Area ${a.area_id} · product ${a.product_id} · ${areaIndex + 1} of ${areas().length}`;
   $("product-name").textContent = a.product_name;
 
+  $("clear").disabled = !value;
+  $("clear-photo").textContent = `Clear photo (${photoCount()})`;
+  $("clear-photo").disabled = !photoCount();
+  $("clear-camera").textContent = `Clear camera ${camera} (${cameraCount()})`;
+  $("clear-camera").disabled = !cameraCount();
+
   const examples = Object.entries(DOCUMENT_EXAMPLES[camera] ?? {})
     .filter(([, areas]) => areas[a.area_id])
     .map(([exampleFile, areas]) => {
@@ -594,6 +649,8 @@ $("reset-filters").onclick = () => {
 $("previous").onclick = previousArea;
 $("next").onclick = nextArea;
 $("clear").onclick = clearArea;
+$("clear-photo").onclick = clearPhoto;
+$("clear-camera").onclick = clearCamera;
 
 document.addEventListener("keydown", (event) => {
   if (event.ctrlKey || event.metaKey || event.altKey || event.target.tagName === "SELECT") return;
