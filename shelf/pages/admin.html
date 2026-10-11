@@ -36,6 +36,7 @@
 
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+  #fatal { padding: 8px 16px; background: var(--bad); color: #fff; font-size: 13px; }
   body {
     margin: 0;
     height: 100vh;
@@ -243,6 +244,7 @@
 </style>
 </head>
 <body>
+<div id="fatal" hidden></div>
 <header>
   <h1>Shock Admin</h1>
   <div class="views" aria-label="View">
@@ -828,7 +830,7 @@ function fillPredictionsSelect(state) {
   const linked = new Set();
   const runs = document.createElement("optgroup");
   runs.label = "Runs";
-  for (const item of state.history) {
+  for (const item of state.history ?? []) {
     if (!item.file) continue;
     linked.add(item.file);
     runs.append(new Option(`${item.label} · run ${item.id}`, item.file));
@@ -836,13 +838,13 @@ function fillPredictionsSelect(state) {
   if (runs.children.length) select.append(runs);
   const files = document.createElement("optgroup");
   files.label = "Files";
-  for (const name of state.predictionOptions) {
+  for (const name of state.predictionOptions ?? ["latest"]) {
     if (name === "latest" || linked.has(name)) continue;
     files.append(new Option(name, name));
   }
   if (files.children.length) select.append(files);
-  const values = new Set(["latest", ...linked, ...state.predictionOptions]);
-  select.value = values.has(kept) ? kept : state.predictionsName;
+  const values = new Set(["latest", ...linked, ...(state.predictionOptions ?? ["latest"])]);
+  select.value = values.has(kept) ? kept : state.predictionsName ?? "latest";
   select.onchange = () => {
     const url = new URL(location.href);
     if (select.value === "latest") url.searchParams.delete("predictions");
@@ -1921,12 +1923,12 @@ async function refreshState() {
   solutions = state.solutions || {};
   predictions = state.predictions;
   predictionsFile = state.predictionsFile;
-  models = state.models;
-  defaultModel = state.defaultModel;
-  predictionNames = state.predictionOptions;
-  queue = Object.entries(state.images).flatMap(([camera, files]) => [
+  models = state.models ?? [];
+  defaultModel = state.defaultModel ?? "ensemble";
+  predictionNames = state.predictionOptions ?? ["latest"];
+  queue = Object.entries(state.images ?? {}).flatMap(([camera, files]) => [
     ...files.map((file) => ({ camera, file, source: "training" })),
-    ...(state.uploads[camera] ?? []).map((file) => ({ camera, file, source: "uploaded" })),
+    ...((state.uploads ?? {})[camera] ?? []).map((file) => ({ camera, file, source: "uploaded" })),
   ]);
   uploadsQueue = Object.entries(state.uploads ?? {}).flatMap(([camera, files]) => files.map((file) => ({ camera, file })));
   buildCameraOptions(state.images);
@@ -1957,24 +1959,37 @@ $("upload-files").addEventListener("change", (event) => {
 });
 $("solution-form").addEventListener("submit", uploadSolution);
 
-(async () => {
-  await refreshState();
-  syncRunForm();
-  try {
-    runJobs = (await (await fetch("/api/runs")).json()).runs;
-  } catch (error) {
-    runJobs = [];
-  }
+// A visible banner for fatal errors, so a broken page says what broke instead of staying blank.
+function fatal(error) {
+  const box = $("fatal");
+  box.hidden = false;
+  box.textContent = `Something broke: ${error?.message ?? error} — reload; if it persists, mention this text.`;
+}
+window.addEventListener("error", (event) => fatal(event.error ?? event.message));
+window.addEventListener("unhandledrejection", (event) => fatal(event.reason));
 
-  // Open the place the URL names; otherwise resume at the first training image
-  // that still has unannotated areas (uploads are never annotatable).
-  if (!readUrl()) {
-    const resume = queue.findIndex((item) => item.source === "training" && doneCount(item) < planogram[item.camera].length);
-    const index = Math.max(0, resume);
-    const firstOpen = planogram[queue[index].camera].findIndex((a) => !entry(queue[index].camera, queue[index].file, a.area_id));
-    selectImage(index, Math.max(0, firstOpen));
+(async () => {
+  try {
+    await refreshState();
+    syncRunForm();
+    try {
+      runJobs = (await (await fetch("/api/runs")).json()).runs;
+    } catch (error) {
+      runJobs = [];
+    }
+
+    // Open the place the URL names; otherwise resume at the first training image
+    // that still has unannotated areas (uploads are never annotatable).
+    if (!readUrl()) {
+      const resume = queue.findIndex((item) => item.source === "training" && doneCount(item) < planogram[item.camera].length);
+      const index = Math.max(0, resume);
+      const firstOpen = planogram[queue[index].camera].findIndex((a) => !entry(queue[index].camera, queue[index].file, a.area_id));
+      selectImage(index, Math.max(0, firstOpen));
+    }
+    applyFilters();
+  } catch (error) {
+    fatal(error);
   }
-  applyFilters();
 })();
 </script>
 </body>
