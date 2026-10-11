@@ -170,6 +170,7 @@
   .links.danger { margin-top: 0; }
   .links.danger button:hover { color: var(--bad); }
   .links button:disabled { opacity: .4; cursor: default; text-decoration: none; color: var(--muted); }
+  .choices button:disabled { opacity: .4; cursor: not-allowed; }
   kbd {
     font: 11px ui-monospace, monospace; padding: 0 4px; margin-left: 4px;
     border: 1px solid currentColor; border-radius: 3px; opacity: .6;
@@ -185,7 +186,7 @@
   }
   .bias-row button:hover { border-color: var(--muted); }
   .bias-row span {
-    min-width: 56px; text-align: center; font-variant-numeric: tabular-nums;
+    min-width: 140px; text-align: center; font-variant-numeric: tabular-nums;
     padding: 9px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel);
   }
 
@@ -208,6 +209,8 @@
   button.download:hover { border-color: var(--muted); }
 
   .run-view { padding: 16px; overflow: auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+  /* The results take their full height inside the run view, so the whole view scrolls as one page. */
+  .run-view > .stats-view { flex: none; overflow: visible; padding: 0; }
   .run-view h2 { font-size: 15px; margin: 0 0 8px; }
   .run-view p { margin: 8px 0 0; color: var(--muted); font-size: 13px; }
   .run-panel { max-width: 760px; }
@@ -366,11 +369,18 @@
           <button data-stock="full">Full<kbd>F</kbd></button>
         </div>
 
-        <span class="group-label" id="bias-label">Area bias — nudges this spot's stock answers lower</span>
+        <span class="group-label" id="bias-label">Area bias — leans this spot's predicted stock lower or higher, on every photo</span>
         <div class="bias-row" role="group" aria-labelledby="bias-label">
-          <button id="bias-down" title="Lower by 0.1 ( [ )">−</button>
-          <span id="bias-value" title="Added to the run's lower bias for this spot"></span>
-          <button id="bias-up" title="Raise by 0.1 ( ] )">+</button>
+          <button id="bias-down" title="Predict lower stock for this spot ( [ )">▼ Lower</button>
+          <span id="bias-value" title="Added to the run's lower bias for this spot (positive leans lower)"></span>
+          <button id="bias-up" title="Predict higher stock for this spot ( ] )">▲ Higher</button>
+        </div>
+
+        <span class="group-label" id="half-bias-label">Half band — how readily this spot is called half</span>
+        <div class="bias-row" role="group" aria-labelledby="half-bias-label">
+          <button id="half-narrower" title="Call half less often for this spot">◀ Narrower</button>
+          <span id="half-bias-value" title="Added to the run's half bias for this spot (positive widens half)"></span>
+          <button id="half-wider" title="Call half more often for this spot, from both sides">Wider ▶</button>
         </div>
 
         <p class="help wide">
@@ -425,12 +435,6 @@
           <label><input type="radio" name="run-mode" value="evaluate"> Evaluate</label>
         </div>
 
-        <span class="group-label only-predict" id="run-photos-label">Photos</span>
-        <div class="choices two only-predict" role="group" aria-labelledby="run-photos-label">
-          <label><input type="radio" name="run-photos" value="training" checked> Training</label>
-          <label><input type="radio" name="run-photos" value="uploaded"> Uploaded</label>
-        </div>
-
         <span class="group-label" id="run-model-label">Model</span>
         <div id="run-models-single">
           <select id="run-model" aria-labelledby="run-model-label"></select>
@@ -445,6 +449,11 @@
           <input id="run-lower-bias" type="number" value="0" step="0.1" aria-labelledby="run-bias-label">
         </div>
 
+        <span class="group-label only-predict" id="run-half-bias-label">Half bias</span>
+        <div class="only-predict">
+          <input id="run-half-bias" type="number" value="0" step="0.1" aria-labelledby="run-half-bias-label">
+        </div>
+
         <span class="group-label only-oof" id="run-folds-label" hidden>Folds</span>
         <div class="only-oof" hidden>
           <input id="run-folds" type="number" value="10" min="2" step="1" aria-labelledby="run-folds-label">
@@ -455,9 +464,15 @@
           <input id="run-rounds" type="number" value="20" min="1" step="1" aria-labelledby="run-rounds-label">
         </div>
 
-        <span class="group-label only-evaluate" id="run-biases-label" hidden>Biases</span>
+        <span class="group-label only-evaluate" id="run-biases-label" hidden>Lower biases</span>
         <div class="only-evaluate" hidden>
           <input id="run-biases" type="text" value="0" aria-labelledby="run-biases-label">
+        </div>
+
+        <span class="group-label only-evaluate" id="run-half-biases-label" hidden>Half biases</span>
+        <div class="only-evaluate" hidden>
+          <input id="run-half-biases" type="text" value="0" aria-labelledby="run-half-biases-label">
+          <p class="help">Every pairing of lower and half bias is scored, on held-out photos and on the uploads.</p>
         </div>
 
         <span class="group-label only-evaluate" id="run-split-label" hidden>Split</span>
@@ -493,6 +508,7 @@
   </section>
 </main>
 
+<script src="/decisions.js"></script>
 <script>
 const STOCK_VALUES = { empty: 0, half: 0.5, full: 1 };
 const STOCK_KEYS = { e: "empty", h: "half", f: "full" };
@@ -509,6 +525,10 @@ const DOCUMENT_EXAMPLES = {
 
 let planogram, annotations;
 let biases = {};
+// The selected predictions as saved, and the run's raw probabilities when it kept them; with probabilities, the
+// shown answers are re-decided with the current biases, so a changed bias shows straight away.
+let savedPredictions = {};
+let probabilities = null;
 let solutions = {};
 let predictions = {};
 let predictionsFile = "";
@@ -549,6 +569,12 @@ const doneCount = ({ camera, file }) =>
   planogram[camera].filter((a) => entry(camera, file, a.area_id)).length;
 const prediction = (camera, file, areaId) => predictions[camera]?.[file]?.[areaId];
 
+// The right answer for an area of a photo: your label for a training photo, the uploaded solution for an uploaded one.
+const truth = ({ camera, file, source }, areaId) =>
+  source === "uploaded" ? solutions[camera]?.[file]?.[areaId] : entry(camera, file, areaId);
+const truthCount = (item) => planogram[item.camera].filter((a) => truth(item, a.area_id)).length;
+const isUpload = () => current()?.source === "uploaded";
+
 // Points a prediction earns against a label, with the challenge's rules; a missing prediction scores worst.
 function areaPoints(label, predicted) {
   if (!predicted) return { compliance: -2, stock: -3 };
@@ -557,10 +583,10 @@ function areaPoints(label, predicted) {
   return { compliance, stock };
 }
 
-// Which parts of the prediction match the label, or null when the area lacks either.
-function agreement(camera, file, areaId) {
-  const label = entry(camera, file, areaId);
-  const predicted = prediction(camera, file, areaId);
+// Which parts of the prediction match the right answer, or null when the area lacks either.
+function agreement(item, areaId) {
+  const label = truth(item, areaId);
+  const predicted = prediction(item.camera, item.file, areaId);
   if (!label || !predicted) return null;
   return {
     stock: predicted.stock_level === label.stock_level,
@@ -568,9 +594,9 @@ function agreement(camera, file, areaId) {
   };
 }
 
-const agreeCount = ({ camera, file }) =>
-  planogram[camera].filter((a) => {
-    const result = agreement(camera, file, a.area_id);
+const agreeCount = (item) =>
+  planogram[item.camera].filter((a) => {
+    const result = agreement(item, a.area_id);
     return result?.stock && result?.compliance;
   }).length;
 
@@ -584,13 +610,13 @@ function matches(i, j) {
   if (filters.source && source !== filters.source) return false;
   if (filters.camera && camera !== filters.camera) return false;
   const id = planogram[camera][j].area_id;
-  const value = entry(camera, file, id);
+  const value = truth(queue[i], id);
   if (filters.status === "todo" && value) return false;
   if (filters.status === "done" && !value) return false;
   if (filters.stock && value?.stock_level !== filters.stock) return false;
   if (filters.compliance && String(value?.planogram_compliant) !== filters.compliance) return false;
   if (view === "compare" && filters.agreement) {
-    const result = agreement(camera, file, id);
+    const result = agreement(queue[i], id);
     if (!result) return false;
     const agrees = result.stock && result.compliance;
     if (filters.agreement === "agree" && !agrees) return false;
@@ -604,10 +630,11 @@ function matches(i, j) {
 const matchingAreas = (i) => planogram[queue[i].camera].map((_, j) => j).filter((j) => matches(i, j));
 
 // How many annotated areas of a photo the prediction gets wrong, and the points those cost.
-function mistakes({ camera, file }) {
+function mistakes(item) {
+  const { camera, file } = item;
   let wrong = 0, lost = 0;
   for (const a of planogram[camera]) {
-    const label = entry(camera, file, a.area_id);
+    const label = truth(item, a.area_id);
     if (!label) continue;
     const result = areaPoints(label, prediction(camera, file, a.area_id));
     if (result.compliance + result.stock < 2) wrong++;
@@ -642,6 +669,8 @@ function formatTime(file) {
 // ---------- Editing ----------
 
 function setEntry(value) {
+  // Uploaded photos are validation; their answers live in the uploaded solution, never in the training labels.
+  if (isUpload()) return;
   const { camera, file } = current();
   const id = area().area_id;
   annotations[camera] ??= {};
@@ -683,6 +712,7 @@ const cameraCount = () =>
   Object.values(annotations[current().camera] ?? {}).reduce((sum, areas) => sum + Object.keys(areas).length, 0);
 
 function clearPhoto() {
+  if (isUpload()) return;
   const { camera, file } = current();
   const count = photoCount();
   if (!count || !confirm(`Remove ${annotationCount(count)} from photo ${file} (camera ${camera})?`)) return;
@@ -694,6 +724,7 @@ function clearPhoto() {
 }
 
 function clearCamera() {
+  if (isUpload()) return;
   const { camera } = current();
   const count = cameraCount();
   const photos = Object.keys(annotations[camera] ?? {}).length;
@@ -959,25 +990,38 @@ function saveBiases() {
   }, 300);
 }
 
-const currentBias = () => biases[current().camera]?.[area().area_id] ?? 0;
+// Each area's bias is {lower, half} (see decisions.js); a positive lower leans its stock answers lower, a positive
+// half widens "half" from both sides. Both apply to every photo of the area.
+const currentBias = () => areaBias(biases, current().camera, area().area_id).lower;
+const currentHalfBias = () => areaBias(biases, current().camera, area().area_id).half;
 
-function setBias(value) {
+function reapplyBiases() {
+  predictions = probabilities ? decideAll(probabilities, biases, savedPredictions) : savedPredictions;
+}
+
+function setBias(value, kind = "lower") {
   const { camera } = current();
   const id = area().area_id;
-  value = Math.round(value * 10) / 10;
+  const bias = areaBias(biases, camera, id);
+  bias[kind] = Math.round(value * 10) / 10;
   biases[camera] ??= {};
-  if (value) biases[camera][id] = value;
+  if (bias.lower || bias.half) biases[camera][id] = bias;
   else {
     delete biases[camera][id];
     if (!Object.keys(biases[camera]).length) delete biases[camera];
   }
   saveBiases();
+  reapplyBiases();
   render();
 }
 
 function renderBias() {
   const value = currentBias();
-  $("bias-value").textContent = value > 0 ? `+${value.toFixed(1)}` : value.toFixed(1);
+  $("bias-value").textContent =
+    value > 0 ? `leans lower ${value.toFixed(1)}` : value < 0 ? `leans higher ${(-value).toFixed(1)}` : "none";
+  const half = currentHalfBias();
+  $("half-bias-value").textContent =
+    half > 0 ? `half wider ${half.toFixed(1)}` : half < 0 ? `half narrower ${(-half).toFixed(1)}` : "none";
 }
 function save() {
   const status = $("save-status");
@@ -1275,13 +1319,20 @@ function appendStats(section, stats, scope) {
   return section;
 }
 
-// One predictions file by selection name ("latest" or a run's output), fetched once and cached.
+// One predictions file by selection name ("latest" or a run's output), fetched once and cached with its raw
+// probabilities; when the run kept those, its answers are re-decided with the current biases.
 async function fetchRunPredictions(name) {
   if (!runPredictions.has(name)) {
-    const response = await fetch(`/api/predictions/${encodeURIComponent(name)}`);
-    runPredictions.set(name, response.ok ? await response.json() : null);
+    const [answers, raw] = await Promise.all(
+      ["predictions", "probabilities"].map((kind) => fetch(`/api/${kind}/${encodeURIComponent(name)}`)),
+    );
+    runPredictions.set(name, {
+      saved: answers.ok ? await answers.json() : null,
+      probabilities: raw.ok ? await raw.json() : null,
+    });
   }
-  return runPredictions.get(name);
+  const { saved, probabilities: raw } = runPredictions.get(name);
+  return saved && raw ? decideAll(raw, biases, saved) : saved;
 }
 
 function logPre(job, scroll) {
@@ -1321,7 +1372,7 @@ function historyItem(id, title, sub, status) {
 
 function renderHistory() {
   const list = $("history");
-  list.replaceChildren(historyItem("latest", "Latest run", "output/annotations.json", null));
+  list.replaceChildren();
   for (const job of runJobs) {
     const sub = job.status === "running"
       ? "running…"
@@ -1348,17 +1399,19 @@ async function renderRunResult() {
   const show = (element) => {
     if (token === resultToken) box.append(element);
   };
+  // Without a choice, open the newest run (or the first file on disk).
   if (selectedRun === "latest") {
-    const preds = await fetchRunPredictions("latest");
-    if (token !== resultToken) return;
-    if (!preds) {
+    const firstFile = predictionNames.find((name) => name !== "latest");
+    const newest = runJobs.length ? String(runJobs[0].id) : firstFile ? `file:${firstFile}` : null;
+    if (!newest) {
       const note = document.createElement("p");
-      note.textContent = "No predictions yet — start a predict run below.";
+      note.textContent = "No runs yet — start a predict run below.";
       show(note);
       return;
     }
-    show(statsResult(preds, "Latest run", "latest"));
-    return;
+    selectedRun = newest;
+    renderHistory();
+    syncUrl();
   }
   const job = runJobs.find((candidate) => String(candidate.id) === String(selectedRun));
   if (selectedRun.startsWith("file:")) {
@@ -1434,7 +1487,7 @@ function renderSidebar() {
     }
     // Annotate view: annotated / areas. Compare view: predictions that agree / annotated areas.
     const done = view === "compare" ? agreeCount(item) : doneCount(item);
-    const total = view === "compare" ? doneCount(item) : planogram[item.camera].length;
+    const total = view === "compare" ? truthCount(item) : planogram[item.camera].length;
     const button = document.createElement("button");
     const tag = item.source === "uploaded" ? " · upload" : "";
     const name = sorted ? `${item.camera} · ${formatTime(item.file)}${tag}` : `${formatTime(item.file)}${tag}`;
@@ -1490,9 +1543,9 @@ function renderPhoto() {
   const short = (v) => v.stock_level[0].toUpperCase() + (v.planogram_compliant ? "" : "✗");
 
   areas().forEach((a, index) => {
-    const value = entry(camera, file, a.area_id);
+    const value = truth(current(), a.area_id);
     const predicted = prediction(camera, file, a.area_id);
-    const result = agreement(camera, file, a.area_id);
+    const result = agreement(current(), a.area_id);
     const selected = index === areaIndex;
     context.globalAlpha = selected || matches(imageIndex, index) ? 1 : 0.3;
     // Annotate view colours by compliance; compare view by whether the prediction agrees with the label.
@@ -1540,11 +1593,17 @@ function renderPanel() {
   $("area-id").textContent = `Area ${a.area_id} · product ${a.product_id} · ${areaIndex + 1} of ${areas().length}`;
   $("product-name").textContent = a.product_name;
 
-  $("clear").disabled = !value;
-  $("clear-photo").textContent = `Clear photo (${photoCount()})`;
-  $("clear-photo").disabled = !photoCount();
+  // Uploaded photos are validation: their answers come from the uploaded solution and can't be edited here.
+  const upload = isUpload();
+  $("clear").disabled = upload || !value;
+  $("clear-photo").textContent = `Clear photo (${upload ? 0 : photoCount()})`;
+  $("clear-photo").disabled = upload || !photoCount();
   $("clear-camera").textContent = `Clear camera ${camera} (${cameraCount()})`;
-  $("clear-camera").disabled = !cameraCount();
+  $("clear-camera").disabled = upload || !cameraCount();
+  for (const button of document.querySelectorAll("[data-compliant], [data-stock]")) {
+    button.disabled = upload;
+    button.title = upload ? "Uploaded photos are validation: their answers come from the uploaded solution" : "";
+  }
 
   const examples = Object.entries(DOCUMENT_EXAMPLES[camera] ?? {})
     .filter(([, areas]) => areas[a.area_id])
@@ -1574,8 +1633,9 @@ function renderComparison() {
 
   const { camera, file } = current();
   const id = area().area_id;
-  const label = entry(camera, file, id);
+  const label = truth(current(), id);
   const predicted = prediction(camera, file, id);
+  const answer = isUpload() ? "Solution" : "Your label";
   const describe = (value, other) => {
     const compliance = value.planogram_compliant ? "Compliant" : "Wrong product";
     const stock = value.stock_level[0].toUpperCase() + value.stock_level.slice(1);
@@ -1588,12 +1648,13 @@ function renderComparison() {
   if (label) {
     const result = areaPoints(label, predicted);
     const total = result.compliance + result.stock;
-    const reason = result.stock === -2 ? ", prediction below your label" : result.stock === -3 ? ", prediction above your label" : "";
+    const which = isUpload() ? "the solution" : "your label";
+    const reason = result.stock === -2 ? `, prediction below ${which}` : result.stock === -3 ? `, prediction above ${which}` : "";
     points = `<dt>Points</dt><dd><span class="${total > 0 ? "gain" : "loss"}">${signed(total)}</span>
       (compliance ${signed(result.compliance)}, stock ${signed(result.stock)}${reason})</dd>`;
   }
   box.innerHTML = `
-    <dt>Your label</dt><dd>${label ? describe(label, predicted) : '<span class="none">Not annotated</span>'}</dd>
+    <dt>${answer}</dt><dd>${label ? describe(label, predicted) : `<span class="none">${isUpload() ? "Not in the uploaded solution" : "Not annotated"}</span>`}</dd>
     <dt>Prediction</dt><dd>${predicted ? describe(predicted, label) : '<span class="none">No prediction</span>'}</dd>
     ${points}`;
 }
@@ -1647,8 +1708,11 @@ window.addEventListener("popstate", () => {
 $("previous").onclick = previousArea;
 $("next").onclick = nextArea;
 $("clear").onclick = clearArea;
-$("bias-down").onclick = () => setBias(currentBias() - 0.1);
-$("bias-up").onclick = () => setBias(currentBias() + 0.1);
+// A positive bias leans stock answers lower (shelf/decisions.py), so "Lower" adds to it and "Higher" subtracts.
+$("bias-down").onclick = () => setBias(currentBias() + 0.1);
+$("bias-up").onclick = () => setBias(currentBias() - 0.1);
+$("half-wider").onclick = () => setBias(currentHalfBias() + 0.1, "half");
+$("half-narrower").onclick = () => setBias(currentHalfBias() - 0.1, "half");
 $("timelapse").onclick = (event) => {
   event.currentTarget.blur();
   toggleTimelapse();
@@ -1675,8 +1739,8 @@ document.addEventListener("keydown", (event) => {
   if (STOCK_KEYS[key]) setStock(STOCK_KEYS[key]);
   else if (key === "c") setCompliance(true);
   else if (key === "w") setCompliance(false);
-  else if (key === "[") setBias(currentBias() - 0.1);
-  else if (key === "]") setBias(currentBias() + 0.1);
+  else if (key === "[") setBias(currentBias() + 0.1);  // lower
+  else if (key === "]") setBias(currentBias() - 0.1);  // higher
   else if (key === "arrowright") nextArea();
   else if (key === "arrowleft") previousArea();
   else if (key === "arrowdown") stepImage(1);
@@ -1738,11 +1802,12 @@ async function submitRun(event) {
   const mode = runMode();
   const body = {
     mode,
-    photos: document.querySelector('input[name="run-photos"]:checked').value,
     models: mode === "evaluate"
       ? [...document.querySelectorAll('input[name="run-models"]:checked')].map((box) => box.value)
       : [$("run-model").value],
     lower_bias: parseFloat($("run-lower-bias").value),
+    half_bias: parseFloat($("run-half-bias").value),
+    half_biases: $("run-half-biases").value,
     folds: parseInt($("run-folds").value),
     rounds: parseInt($("run-rounds").value),
     biases: $("run-biases").value,
@@ -1922,7 +1987,9 @@ async function refreshState() {
   annotations = state.annotations;
   biases = state.biases || {};
   solutions = state.solutions || {};
-  predictions = state.predictions;
+  savedPredictions = state.predictions;
+  probabilities = state.probabilities ?? null;
+  reapplyBiases();
   predictionsFile = state.predictionsFile;
   models = state.models ?? [];
   defaultModel = state.defaultModel ?? "ensemble";

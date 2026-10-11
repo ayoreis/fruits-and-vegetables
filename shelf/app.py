@@ -21,7 +21,7 @@ import time
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 import cv2
 import numpy as np
@@ -29,6 +29,7 @@ import numpy as np
 from shelf.crops import cut_area
 from shelf.models import DEFAULT_MODEL, MODELS
 from shelf.planogram import area_quad, load_cameras
+from shelf.predict import probabilities_path
 from shelf.score import STOCK_VALUES
 
 # The staff and admin pages.
@@ -123,7 +124,7 @@ def save_runs(runs_file):
     try:
         path = Path(runs_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = path.with_suffix(".json.tmp")
+        temporary = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
         temporary.write_text(json.dumps(payload, indent=2))
         os.replace(temporary, path)
     except OSError:
@@ -166,7 +167,8 @@ class Handler(SimpleHTTPRequestHandler):
         return set(json.loads(path.read_text())) if path.exists() else set()
 
     def write_json(self, path, data):
-        temporary = path.with_suffix(".json.tmp")
+        # A temporary name per thread, so two saves at once can't clobber each other's half-written file.
+        temporary = path.with_name(f"{path.name}.{threading.get_ident()}.tmp")
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(temporary, "w") as file:
             json.dump(data, file, indent=2)
@@ -203,10 +205,20 @@ class Handler(SimpleHTTPRequestHandler):
             with runs_lock:
                 return self.send_json({"runs": [runs[job_id] for job_id in sorted(runs, reverse=True)]})
 
+        if path == "/decisions.js":
+            return self.send(200, (ROOT / "decisions.js").read_bytes(), "text/javascript")
+
+        if path.startswith("/api/probabilities/"):
+            # The raw probabilities behind a predictions selection, so the pages can apply biases themselves.
+            file = self.prediction_files().get(unquote(path[len("/api/probabilities/"):]))
+            if file is not None and probabilities_path(file).exists():
+                return self.send(200, probabilities_path(file).read_bytes(), "application/json")
+            return self.send(404, b"No probabilities for these predictions", "text/plain")
+
         if path.startswith("/api/predictions/"):
             # One run's predictions by selection name (see prediction_files); unknown names 404.
             # ?download=1 serves it as a file attachment instead of inline JSON.
-            name = path[len("/api/predictions/"):]
+            name = unquote(path[len("/api/predictions/"):])
             file = self.prediction_files().get(name)
             if file is not None and file.exists():
                 download = parse_qs(url.query).get("download")
@@ -215,16 +227,18 @@ class Handler(SimpleHTTPRequestHandler):
             return self.send(404, b"No such predictions", "text/plain")
 
         if match := IMAGE_PATH.match(path):
-            if path := self.image_path(*match.groups()):
-                return self.send(200, path.read_bytes(), "image/jpeg")
+            if photo := self.image_path(*match.groups()):
+                return self.send(200, photo.read_bytes(), "image/jpeg")
+            return self.send(404, b"No such photo", "text/plain")
 
         if match := CROP_PATH.match(path):
             camera, timestamp, area_id = match.groups()
-            path = self.image_path(camera, timestamp)
+            photo = self.image_path(camera, timestamp)
             area = next((a for a in self.planogram.get(camera, {}).get("products", []) if a["area_id"] == area_id), None)
-            if path and area:
+            image = cv2.imread(str(photo)) if photo and area else None
+            if image is not None:
                 quad = np.array(area_quad(area), dtype=np.float32)
-                _, crop = cv2.imencode(".jpg", cut_area(cv2.imread(str(path)), quad))
+                _, crop = cv2.imencode(".jpg", cut_area(image, quad))
                 return self.send(200, crop.tobytes(), "image/jpeg")
 
         self.send(404, b"Not found", "text/plain")
@@ -233,7 +247,10 @@ class Handler(SimpleHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if self.path.startswith("/api/upload"):
             return self.upload(length)
-        body = json.loads(self.rfile.read(length)) if length else {}
+        try:
+            body = json.loads(self.rfile.read(length)) if length else {}
+        except ValueError:
+            return self.send(400, json.dumps({"error": "Request body isn't valid JSON"}).encode(), "application/json")
         if self.path == "/api/annotations":
             self.write_json(self.options.output, body)
             return self.send_json({"saved": True})
@@ -245,12 +262,18 @@ class Handler(SimpleHTTPRequestHandler):
                 self.write_json(self.options.done, sorted(done))
             return self.send_json({"saved": True})
         if self.path == "/api/biases":
-            # body: {camera: {area id: bias}}; per-area lower biases tuned in the annotate view.
+            # body: {camera: {area id: {"lower": x, "half": y}}} (a plain number means lower only); per-area biases
+            # tuned in the annotate view. Areas with both at zero are dropped.
             try:
-                cleaned = {camera: {area_id: float(bias) for area_id, bias in areas.items()}
-                           for camera, areas in body.items()}
+                cleaned = {}
+                for camera, areas in body.items():
+                    for area_id, bias in areas.items():
+                        lower, half = ((float(bias.get("lower", 0)), float(bias.get("half", 0)))
+                                       if isinstance(bias, dict) else (float(bias), 0.0))
+                        if lower or half:
+                            cleaned.setdefault(camera, {})[area_id] = {"lower": lower, "half": half}
             except (AttributeError, TypeError, ValueError):
-                return self.send(400, json.dumps({"error": "Biases must be {camera: {area: number}}"}).encode(),
+                return self.send(400, json.dumps({"error": "Biases must be {camera: {area: {lower, half}}}"}).encode(),
                                  "application/json")
             self.write_json(self.options.area_biases, cleaned)
             return self.send_json({"saved": True})
@@ -276,6 +299,12 @@ class Handler(SimpleHTTPRequestHandler):
             temporary = dest.with_suffix(".json.tmp")
             temporary.write_bytes(file.read_bytes())
             os.replace(temporary, dest)
+            # Its raw probabilities go along, so the pages keep applying biases to the promoted answers.
+            source, target = probabilities_path(file), probabilities_path(dest)
+            if source.exists():
+                target.write_bytes(source.read_bytes())
+            elif target.exists():
+                target.unlink()
             return self.send_json({"saved": True})
         if self.path == "/api/run":
             # body: predict.py options (see build_command); starts a background run unless one is going.
@@ -402,12 +431,10 @@ class Handler(SimpleHTTPRequestHandler):
         device = params.get("device", "auto")
         if device not in DEVICES:
             raise ValueError(f"Unknown device {device!r}; want {', '.join(DEVICES)}")
-        photos = params.get("photos", "training")
-        if photos not in ("training", "uploaded"):
-            raise ValueError(f"Unknown photos {photos!r}; want training or uploaded")
-        cameras_dir = self.options.cameras if photos == "training" else UPLOADS_DIR
-        if photos == "uploaded" and not any(Path(cameras_dir).glob("*/*.jpg")):
-            raise ValueError("No uploaded photos yet — upload some first")
+        # Every run covers the training photos and, when there are any, the uploads, so it can be scored against
+        # both the labels and the uploaded solution.
+        has_uploads = any(Path(UPLOADS_DIR).glob("*/*.jpg"))
+        cameras_dirs = [self.options.cameras] + ([UPLOADS_DIR] if has_uploads else [])
         try:
             jobs = int(params.get("jobs", -1))
         except (TypeError, ValueError):
@@ -415,7 +442,7 @@ class Handler(SimpleHTTPRequestHandler):
         out = str(Path(output).resolve()) if output is not None else str(Path(self.options.predictions).resolve())
         command = [sys.executable, "-m", "shelf.predict", "--model", *models,
                    "--planogram", str(Path(self.options.planogram).resolve()),
-                   "--cameras", str(Path(cameras_dir).resolve()),
+                   "--cameras", *(str(Path(folder).resolve()) for folder in cameras_dirs),
                    "--train-cameras", str(Path(self.options.cameras).resolve()),
                    "--annotations", str(Path(self.options.output).resolve()),
                    "--area-biases", str(Path(self.options.area_biases).resolve()),
@@ -442,15 +469,24 @@ class Handler(SimpleHTTPRequestHandler):
             split = params.get("split", "photos")
             if split not in ("photos", "cameras"):
                 raise ValueError(f"Unknown split {split!r}; want photos or cameras")
+            half_biases = params.get("half_biases", [0.0])
+            if isinstance(half_biases, str):
+                half_biases = half_biases.replace(",", " ").split()
+            try:
+                half_biases = [float(bias) for bias in half_biases] or [0.0]
+            except (TypeError, ValueError):
+                raise ValueError(f"Half biases must be numbers, not {params.get('half_biases')!r}")
             command += ["--evaluate", str(rounds), "--split", split,
-                        "--biases", *(str(bias) for bias in biases)]
+                        "--biases", *(str(bias) for bias in biases), "--half-biases", *(str(b) for b in half_biases)]
             return command, f"evaluate {', '.join(models)} ({rounds} rounds)", mode, None
-        scope = " on uploads" if photos == "uploaded" else ""
+        scope = " + uploads" if has_uploads else ""
         try:
             lower_bias = float(params.get("lower_bias", 0.0))
+            half_bias = float(params.get("half_bias", 0.0))
         except (TypeError, ValueError):
-            raise ValueError(f"Lower bias must be a number, not {params.get('lower_bias')!r}")
-        command += ["--lower-bias", str(lower_bias)]
+            raise ValueError("Lower and half bias must be numbers")
+        command += ["--lower-bias", str(lower_bias), "--half-bias", str(half_bias)]
+        bias = f"lower {lower_bias:g}, half {half_bias:g}"
         if mode == "out-of-fold":
             try:
                 folds = int(params.get("folds", 10))
@@ -459,16 +495,17 @@ class Handler(SimpleHTTPRequestHandler):
             if folds < 2:
                 raise ValueError("Folds must be at least 2")
             command += ["--out-of-fold", str(folds)]
-            return command, f"out-of-fold {models[0]} ({folds} folds, bias {lower_bias}){scope}", mode, f"{models[0]}.out-of-fold"
-        return command, f"predict {models[0]} (bias {lower_bias}){scope}", mode, models[0]
+            return command, f"out-of-fold {models[0]} ({folds} folds, {bias}){scope}", mode, f"{models[0]}.out-of-fold"
+        return command, f"predict {models[0]} ({bias}){scope}", mode, models[0]
 
     def prediction_files(self):
         """The predictions to choose from: the latest run, each model's saved predictions,
         and every kept historical output (output/history/<timestamp>.json, newest last)."""
         files = {"latest": self.options.predictions}
-        files.update({path.stem: path for path in sorted(self.options.predictions_dir.glob("*.json"))})
+        answers = lambda folder: sorted(p for p in folder.glob("*.json") if not p.name.endswith(".probabilities.json"))
+        files.update({path.stem: path for path in answers(self.options.predictions_dir)})
         history_dir = (Path.cwd() / self.options.predictions_dir).parent / "history"
-        files.update({path.stem: path for path in sorted(history_dir.glob("*.json")) if path.stem not in files})
+        files.update({path.stem: path for path in answers(history_dir) if path.stem not in files})
         return files
 
     def state(self, chosen="latest"):
@@ -506,6 +543,9 @@ class Handler(SimpleHTTPRequestHandler):
             "biases": json.loads(self.options.area_biases.read_text()) if self.options.area_biases.exists() else {},
             "solutions": json.loads(solution.read_text()) if (solution := UPLOADS_DIR / "annotations.json").exists() else {},
             "predictions": json.loads(predictions.read_text()) if predictions.exists() else {},
+            # The raw probabilities behind them, when the run saved some; the pages apply biases to these live.
+            "probabilities": (json.loads(probabilities_path(predictions).read_text())
+                              if probabilities_path(predictions).exists() else None),
             "predictionsFile": str(predictions),
             "predictionsName": chosen,
             "predictionOptions": list(files),

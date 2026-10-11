@@ -194,6 +194,7 @@
   </div>
 </main>
 
+<script src="/decisions.js"></script>
 <script>
 // What each predicted state asks staff to do, most urgent first.
 const STATES = {
@@ -533,7 +534,8 @@ for (const tile of document.querySelectorAll("[data-show]")) {
   planogram = state.planogram;
   images = state.images;
   uploads = state.uploads ?? {};
-  predictions = state.predictions;
+  // With the run's raw probabilities, answers follow the current per-area biases (see decisions.js).
+  predictions = state.probabilities ? decideAll(state.probabilities, state.biases ?? {}, state.predictions) : state.predictions;
   done = new Set(state.done);
   $("time").min = earliestTime();
   $("time").max = latestTime();

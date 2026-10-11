@@ -22,21 +22,36 @@ def expected_points(prediction, compliant_probability, stock_probabilities, empt
     return total
 
 
-def lowered(stock_probabilities, lower_bias):
-    """Shift probability toward lower stock levels: each level down is weighted e^lower_bias more."""
+def adjusted(stock_probabilities, lower_bias=0.0, half_bias=0.0):
+    """Reweight the stock probabilities before deciding.
+
+    lower_bias shifts toward lower levels: each level down is weighted e^lower_bias more (negative shifts up).
+    half_bias widens "half" from both sides: half is weighted e^half_bias more (negative narrows it).
+    shelf/pages/decisions.js does the same for the pages; keep the two in step.
+    """
     levels = list(STOCK_VALUES)
-    weights = {level: stock_probabilities[level] * np.exp(lower_bias * (len(levels) - 1 - i)) for i, level in enumerate(levels)}
+    weights = {
+        level: stock_probabilities[level] * np.exp(lower_bias * (len(levels) - 1 - i) + (half_bias if level == "half" else 0))
+        for i, level in enumerate(levels)
+    }
     total = sum(weights.values())
     return {level: weight / total for level, weight in weights.items()}
 
 
-def decide(compliant_probability, stock_probabilities, lower_bias=0.0, empty_is_compliant=True):
+def lowered(stock_probabilities, lower_bias):
+    """Shift probability toward lower stock levels (see adjusted)."""
+    return adjusted(stock_probabilities, lower_bias)
+
+
+def decide(compliant_probability, stock_probabilities, lower_bias=0.0, half_bias=0.0, empty_is_compliant=True):
     """Pick the answer with the most expected points; the uneven penalties favour lower stock levels.
 
-    lower_bias shifts the stock probabilities further down first, for when the labels may run higher than the
-    organisers' ("when in doubt, under-estimate"). An empty answer is never paired with "wrong product".
+    lower_bias and half_bias reweight the stock probabilities first (see adjusted): for when the labels may run
+    higher than the organisers' ("when in doubt, under-estimate"), or call half more or less often than they do.
+    An empty answer is never paired with "wrong product".
     """
-    stock_probabilities = lowered(stock_probabilities, lower_bias) if lower_bias else stock_probabilities
+    if lower_bias or half_bias:
+        stock_probabilities = adjusted(stock_probabilities, lower_bias, half_bias)
     candidates = [
         {"planogram_compliant": compliant, "stock_level": level, "stock_value": value}
         for compliant in (True, False)

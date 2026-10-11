@@ -14,8 +14,16 @@ output/annotations.json, the file to submit.
     --out-of-fold       predict labelled photos with models that never saw their labels, to review mistakes
                         honestly in the admin compare view (saved as output/predictions/<model>.out-of-fold.json)
 
-    Per-area biases from --area-biases ({camera: {area_id: bias}}) add to --lower-bias for that area's
-    answers; missing areas count as zero. Tune them in the admin annotate view.
+Photos come from the training folder and input/uploads (the uploaded validation photos), so every run covers both;
+with --evaluate, the uploads are also scored against their solution (input/uploads/annotations.json) if there is one.
+
+Biases reweight the model's stock probabilities before each answer is chosen: --lower-bias leans answers lower
+(negative: higher) and --half-bias widens "half" from both sides (negative: narrower). Per-area biases from
+--area-biases ({camera: {area_id: {"lower": x, "half": y}}}, or a plain number for lower) add to those for every
+photo of that area; tune them in the admin annotate view.
+
+Next to each answers file, <name>.probabilities.json keeps the model's raw probabilities, so the pages can apply
+changed biases straight away without running the model again.
 """
 
 import argparse
@@ -27,7 +35,7 @@ import numpy as np
 
 from shelf.crops import cut_area
 from shelf.decisions import decide
-from shelf.evaluation import evaluate, nested, out_of_fold
+from shelf.evaluation import biased_answers, evaluate, nested, out_of_fold, score_solution
 from shelf.features import FeatureExtractor
 from shelf.models import DEFAULT_MODEL, MODELS
 from shelf.planogram import area_quad, load_cameras
@@ -50,12 +58,46 @@ def area_crops(planogram, cameras_dir, photos):
 
 
 def load_area_biases(path):
-    """Per-area lower biases, {(camera, area id): bias}; a missing file or entry means zero."""
+    """Per-area (lower, half) biases, {(camera, area id): (lower, half)}; a missing file or entry means (0, 0).
+
+    Each entry is {"lower": x, "half": y}, or a plain number meaning a lower bias only (the older format).
+    """
     if not path.exists():
         return {}
-    return {(camera, area_id): float(bias)
-            for camera, areas in json.loads(path.read_text()).items()
-            for area_id, bias in areas.items()}
+    biases = {}
+    for camera, areas in json.loads(path.read_text()).items():
+        for area_id, bias in areas.items():
+            if isinstance(bias, dict):
+                biases[camera, area_id] = (float(bias.get("lower", 0)), float(bias.get("half", 0)))
+            else:
+                biases[camera, area_id] = (float(bias), 0.0)
+    return biases
+
+
+def find_photos(planogram, folders):
+    """{(camera, file): folder} for every photo in the folders; a name already seen in an earlier folder is skipped,
+    since features are cached by camera, file and area."""
+    folder_of = {}
+    for folder in folders:
+        for camera in sorted(planogram):
+            for path in sorted((folder / camera).glob("*.jpg")):
+                if (camera, path.name) in folder_of:
+                    print(f"Skipping {path}: {camera}/{path.name} is already in {folder_of[camera, path.name]}")
+                    continue
+                folder_of[camera, path.name] = folder
+    return folder_of
+
+
+def crops_of(planogram, folder_of, photos):
+    crops = {}
+    for folder in dict.fromkeys(folder_of.values()):
+        crops.update(area_crops(planogram, folder, [photo for photo in photos if folder_of[photo] == folder]))
+    return crops
+
+
+def probabilities_path(path):
+    """Where a predictions file's raw probabilities live: <name>.probabilities.json next to it."""
+    return path.with_name(f"{path.stem}.probabilities.json")
 
 
 def main():
@@ -63,7 +105,11 @@ def main():
     parser.add_argument("--model", nargs="+", default=[DEFAULT_MODEL], choices=list(MODELS),
                         help=f"which model (default {DEFAULT_MODEL}); several to compare with --evaluate")
     parser.add_argument("--planogram", type=Path, default=Path("input/planogram.json"))
-    parser.add_argument("--cameras", type=Path, default=Path("input/cameras"), help="photos to predict")
+    parser.add_argument("--cameras", type=Path, nargs="+", default=[Path("input/cameras"), Path("input/uploads")],
+                        help="folders of photos to predict, each laid out <camera>/<photo>.jpg (default: the training "
+                             "photos and the uploads)")
+    parser.add_argument("--solution", type=Path, default=Path("input/uploads/annotations.json"),
+                        help="the uploaded photos' right answers; --evaluate scores the uploads against it")
     parser.add_argument("--annotations", type=Path, default=Path("input/annotations.json"), help="labels to train on")
     parser.add_argument("--train-cameras", type=Path, default=Path("input/cameras"), help="photos the labels refer to")
     parser.add_argument("--output", type=Path, default=Path("output/annotations.json"), help="the file to submit")
@@ -75,11 +121,15 @@ def main():
     parser.add_argument("--out-of-fold", type=int, nargs="?", const=10, metavar="FOLDS",
                         help="predict labelled photos with models that didn't see their labels")
     parser.add_argument("--lower-bias", type=float, default=0.0,
-                        help="lean stock answers further toward lower levels (0 = none)")
+                        help="lean stock answers toward lower levels (0 = none, negative = higher)")
+    parser.add_argument("--half-bias", type=float, default=0.0,
+                        help="widen half from both sides (0 = none, negative = narrower)")
     parser.add_argument("--area-biases", type=Path, default=Path("input/area-biases.json"),
-                        help="per-area lower biases, added to --lower-bias (tuned in the admin annotate view)")
+                        help="per-area lower and half biases, added to the run's (tuned in the admin annotate view)")
     parser.add_argument("--biases", type=float, nargs="+", default=[0.0],
                         help="lower biases to compare with --evaluate")
+    parser.add_argument("--half-biases", type=float, nargs="+", default=[0.0],
+                        help="half biases to compare with --evaluate (every pairing with --biases is scored)")
     parser.add_argument("--jobs", type=int, default=-1,
                         help="processes for --evaluate and --out-of-fold (-1 = all cores)")
     parser.add_argument("--device", default="auto",
@@ -104,28 +154,35 @@ def main():
     print(f"Training on {len(labels)} labelled areas from {len({k[:2] for k in train_keys})} photos")
     area_biases = load_area_biases(args.area_biases)
     if area_biases:
-        print(f"Loaded lower biases for {len(area_biases)} areas from {args.area_biases}")
+        print(f"Loaded biases for {len(area_biases)} areas from {args.area_biases}")
+    folder_of = find_photos(planogram, args.cameras)
 
     if args.evaluate:
-        evaluate(args.model, train_features, train_keys, labels, args.evaluate, args.biases, args.split, args.jobs,
+        biases = [(lower, half) for lower in args.biases for half in args.half_biases]
+        evaluate(args.model, train_features, train_keys, labels, args.evaluate, biases, args.split, args.jobs,
                  area_biases)
+        solution = json.loads(args.solution.read_text()) if args.solution.exists() else {}
+        wanted = [(camera, file) for camera, files in solution.items() for file in files if (camera, file) in folder_of]
+        upload_crops = crops_of(planogram, folder_of, wanted)
+        upload_keys = [(camera, file, area_id) for camera, file in wanted for area_id in solution[camera][file]
+                       if (camera, file, area_id) in upload_crops]
+        if upload_keys:
+            upload_features = extract(upload_keys, [upload_crops[key] for key in upload_keys], needs)
+            score_solution(args.model, train_features, labels, upload_features, upload_keys,
+                           [solution[c][f][a] for c, f, a in upload_keys], biases, area_biases)
         return
-
-    def biased(probabilities, keys):
-        return [decide(*p, args.lower_bias + area_biases.get((camera, area_id), 0.0))
-                for p, (camera, _, area_id) in zip(probabilities, keys)]
 
     name = args.model[0]
     model = MODELS[name]().fit(train_features, labels)
-    photos = [(camera, path.name) for camera in sorted(planogram) for path in sorted((args.cameras / camera).glob("*.jpg"))]
-    crops = area_crops(planogram, args.cameras, photos)
+    photos = list(folder_of)
+    crops = crops_of(planogram, folder_of, photos)
     keys = list(crops)
-    answers = biased(model.predict(extract(keys, [crops[key] for key in keys], needs)), keys)
+    probabilities = model.predict(extract(keys, [crops[key] for key in keys], needs))
     if args.out_of_fold:
-        held_out = out_of_fold(name, train_features, train_keys, labels, args.out_of_fold, args.lower_bias, args.jobs,
-                               area_biases)
-        answers = [held_out.get(key, answer) for key, answer in zip(keys, answers)]
+        held_out = out_of_fold(name, train_features, train_keys, labels, args.out_of_fold, args.jobs)
+        probabilities = [held_out.get(key, p) for key, p in zip(keys, probabilities)]
         print(f"{sum(key in held_out for key in keys)} labelled areas predicted out of fold")
+    answers = biased_answers(probabilities, keys, (args.lower_bias, args.half_bias), area_biases)
     predictions = nested(keys, answers)
 
     # A photo that can't be read still gets an answer for every area: the cautious "compliant, empty".
@@ -136,11 +193,20 @@ def main():
 
     saved = PREDICTIONS / f"{name}{'.out-of-fold' if args.out_of_fold else ''}.json"
     targets = [args.output] if args.output_only else [saved, args.output]
+    # The raw probabilities, before any bias, so changed biases can be applied without running the model again.
+    raw = {
+        "model": name, "lower_bias": args.lower_bias, "half_bias": args.half_bias,
+        "areas": nested(keys, [{"compliant": float(c), "stock": {level: float(v) for level, v in stock.items()}}
+                               for c, stock in probabilities]),
+    }
     for path in dict.fromkeys(targets):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(predictions, indent=2))
+        probabilities_path(path).write_text(json.dumps(raw))
     count = sum(len(areas) for images in predictions.values() for areas in images.values())
-    print(f"Wrote {count} area predictions for {len(photos)} photos to {', '.join(str(p) for p in dict.fromkeys(targets))}")
+    per_folder = ", ".join(f"{sum(f == folder for f in folder_of.values())} from {folder}" for folder in args.cameras)
+    print(f"Wrote {count} area predictions for {len(photos)} photos ({per_folder}) "
+          f"to {', '.join(str(p) for p in dict.fromkeys(targets))}")
 
 
 if __name__ == "__main__":
