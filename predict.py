@@ -6,6 +6,10 @@ included, since a missing area scores worst of all.
 
 With --evaluate, it instead estimates the validation score: it repeatedly hides 1-2 labelled photos per camera,
 trains on the rest and scores the hidden ones.
+
+With --out-of-fold, labelled photos are predicted by models that never saw their labels (the photos are split into
+folds, each predicted by a model trained on the others). Comparing those predictions with the annotations, for
+example in the annotator's compare view, then shows the model's real mistakes rather than what it memorised.
 """
 
 import argparse
@@ -65,6 +69,35 @@ def nested(keys, values):
     return result
 
 
+def subset(features, rows):
+    return {name: value[rows] for name, value in features.items()}
+
+
+def out_of_fold(features, keys, labels, folds):
+    """Answers for every labelled area from a model that didn't see its photo's labels.
+
+    Each camera's photos are dealt round-robin into the folds, so every fold has every camera.
+    """
+    photos = {}
+    for camera, file, _ in keys:
+        photos.setdefault(camera, set()).add(file)
+    fold_of = {}
+    for camera, files in photos.items():
+        shuffled = sorted(files)
+        random.Random(camera).shuffle(shuffled)
+        fold_of.update({(camera, file): i % folds for i, file in enumerate(shuffled)})
+    fold = np.array([fold_of[key[:2]] for key in keys])
+
+    answers = {}
+    for number in range(folds):
+        test = fold == number
+        print(f"  fold {number + 1} of {folds}: predicting {test.sum()} areas")
+        model = ShelfModel().fit(subset(features, ~test), [l for l, t in zip(labels, test) if not t])
+        test_keys = [key for key, t in zip(keys, test) if t]
+        answers.update(zip(test_keys, (decide(*p) for p in model.predict(subset(features, test)))))
+    return answers
+
+
 def evaluate(features, keys, labels, rounds):
     """Average held-out score over several random picks of 1-2 hidden photos per camera."""
     photos = {}
@@ -80,8 +113,8 @@ def evaluate(features, keys, labels, rounds):
             for file in rng.sample(sorted(files), 2 if len(files) >= 3 else 1)
         }
         test = np.array([(camera, file) in hidden for camera, file, _ in keys])
-        model = ShelfModel().fit({name: value[~test] for name, value in features.items()}, [l for l, t in zip(labels, test) if not t])
-        answers = [decide(*p) for p in model.predict({name: value[test] for name, value in features.items()})]
+        model = ShelfModel().fit(subset(features, ~test), [l for l, t in zip(labels, test) if not t])
+        answers = [decide(*p) for p in model.predict(subset(features, test))]
         test_keys = [key for key, t in zip(keys, test) if t]
         truth = nested(test_keys, [l for l, t in zip(labels, test) if t])
         total = points(sum(score(nested(test_keys, answers), truth).values(), Counter()))
@@ -102,6 +135,8 @@ def main():
     parser.add_argument("--output", type=Path, default=Path("output/annotations.json"))
     parser.add_argument("--evaluate", type=int, nargs="?", const=20, metavar="ROUNDS",
                         help="estimate the validation score instead of predicting")
+    parser.add_argument("--out-of-fold", type=int, nargs="?", const=10, metavar="FOLDS",
+                        help="predict labelled photos with models that didn't see their labels")
     args = parser.parse_args()
 
     planogram = load_cameras(args.planogram)
@@ -130,6 +165,10 @@ def main():
     crops = area_crops(planogram, args.cameras, photos)
     keys = list(crops)
     answers = [decide(*p) for p in model.predict(extract(keys, [crops[key] for key in keys]))]
+    if args.out_of_fold:
+        held_out = out_of_fold(train_features, train_keys, labels, args.out_of_fold)
+        answers = [held_out.get(key, answer) for key, answer in zip(keys, answers)]
+        print(f"{sum(key in held_out for key in keys)} labelled areas predicted out of fold")
     predictions = nested(keys, answers)
 
     # A photo that can't be read still gets an answer for every area: the cautious "compliant, empty".
