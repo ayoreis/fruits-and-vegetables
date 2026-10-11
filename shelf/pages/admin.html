@@ -380,11 +380,15 @@
         <span class="group-label" id="upload-files-label">Camera folders</span>
         <div><input id="upload-files" type="file" webkitdirectory aria-labelledby="upload-files-label"></div>
 
+        <span class="group-label" id="upload-camera-label">Loose files</span>
+        <div><select id="upload-camera" aria-labelledby="upload-camera-label"></select></div>
+
         <span></span>
         <div><button id="upload-submit" type="submit">Upload</button></div>
       </form>
       <p class="note">Pick the folder <em>containing</em> camera folders (<em>6385/….jpg</em>) — every
         photo lands in <em>input/uploads/&lt;camera&gt;/</em>, apart from the training photos.
+        Photos picked without a camera folder go to the <em>loose files</em> camera.
         Pick again to add more folders. Existing files are never overwritten.</p>
       <div id="upload-status" aria-live="polite"></div>
     </div>
@@ -1756,12 +1760,23 @@ async function uploadImages(event) {
   }
   let saved = 0;
   for (const file of picked) {
+    // Camera and filename come from the folders each photo was picked in: <camera>/<file>.
+    // Photos picked without a camera folder fall back to the selected loose-files camera.
     const parts = (file.webkitRelativePath || file.name).split("/");
-    if (parts.length !== 2) {
-      note(`✗ ${file.name}: pick the folder containing camera folders, not deeper`, "bad");
+    let camera, name;
+    if (parts.length === 2) {
+      [camera, name] = parts;
+    } else if (parts.length === 1) {
+      camera = $("upload-camera").value;
+      name = parts[0];
+      if (!camera) {
+        note(`✗ ${name}: no camera folder — pick the parent folder, or set a loose-files camera`, "bad");
+        continue;
+      }
+    } else {
+      note(`✗ ${file.name}: folders inside folders — pick the folder that directly contains the camera folders`, "bad");
       continue;
     }
-    const [camera, name] = parts;
     if (!(camera in planogram)) {
       note(`✗ ${file.name}: unknown camera folder ${camera}`, "bad");
       continue;
@@ -1825,6 +1840,11 @@ function buildCameraOptions(images) {
   for (const camera of Object.keys(images)) select.add(new Option(camera, camera));
   select.value = kept in images ? kept : "";
   filters.camera = select.value;
+  const upload = $("upload-camera");
+  const keptUpload = upload.value;
+  upload.replaceChildren(new Option("From folder names", ""));
+  for (const camera of Object.keys(images)) upload.add(new Option(camera, camera));
+  upload.value = keptUpload in images ? keptUpload : "";
 }
 
 function buildModelControls() {
